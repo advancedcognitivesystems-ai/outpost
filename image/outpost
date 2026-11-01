@@ -1,0 +1,3 @@
+#!/bin/sh
+# The `outpost` tool inside the container, from the code image/Dockerfile copies.
+PYTHONPATH=/opt/outpost/lib exec python3 -m outpost.container.cli.main "$@"

@@ -8,7 +8,7 @@ A bind mount behaves differently on a local and on a remote host: locally it is 
 
 ## Decision
 
-Files cross only by copy: `./outpost cp` in both directions, and the `copy` entries of `outpost.yaml` on every `up`. A copy is a tar stream through `docker exec`, as the container's user, identical locally and remotely, with nothing staged on the host. Bind mounts in the settings (`mounts`, `workspaceMount`, `-v`, `--volume`, `--mount` in `runArgs`) are refused.
+Files cross only by copy: `./outpost cp` in both directions, and the `copy` entries of `outpost.yaml` on every `up`. A copy is a tar stream through `docker exec`, as the container's user, identical locally and remotely, with nothing staged on the host. Bind mounts in the settings (`mounts`, `workspaceMount`, `-v`, `--volume`, `--mount`, `--volumes-from` in `runArgs`) are refused, and `up` checks the running container as well, since features and image metadata can add mounts of their own.
 
 ## Consequences
 

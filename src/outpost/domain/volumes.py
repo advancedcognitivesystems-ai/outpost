@@ -17,7 +17,7 @@ DEFAULT_TARGETS: dict[str, PurePosixPath] = {
     "docker": DOCKER_DATA,
     "state": STATE,
 }
-WORKSPACES_ROLE = "workspaces"
+PERSIST_SEPARATOR = ":"
 _SYSTEM = tuple(PurePosixPath(path) for path in ("/proc", "/sys", "/dev"))
 _SLUG = re.compile(r"[^a-z0-9_.-]+")
 
@@ -37,10 +37,17 @@ def persist_path(text: str) -> PurePosixPath:
     path = PurePosixPath(text)
     if not path.is_absolute() or ".." in path.parts or path == PurePosixPath("/"):
         raise InvalidValue(f"{text!r} must be an absolute path below /, without '..'")
+    if PERSIST_SEPARATOR in text:
+        raise InvalidValue(f"{text!r} cannot contain {PERSIST_SEPARATOR!r}")
     for target in (*DEFAULT_TARGETS.values(), *_SYSTEM):
         if _overlaps(path, target):
             raise InvalidValue(f"{path} overlaps {target}, which Outpost already handles")
     return path
+
+
+def persisted_paths(text: str) -> tuple[PurePosixPath, ...]:
+    """The persisted paths as the launcher passes them to the container, in one variable."""
+    return tuple(persist_path(item) for item in text.split(PERSIST_SEPARATOR) if item)
 
 
 def volume_name(environment: EnvironmentName, role: str) -> str:

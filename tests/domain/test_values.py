@@ -7,13 +7,14 @@ from pathlib import PurePosixPath
 import pytest
 
 from outpost.domain.errors import InvalidValue
+from outpost.domain.exposure import Exposure, Mount, Published, exposure_problems
 from outpost.domain.host import LocalHost, SshHost, parse_host
 from outpost.domain.init import Script, scripts_digest
 from outpost.domain.names import DnsName, EnvironmentName
 from outpost.domain.routes import Site, Upstream, matches
 from outpost.domain.status import BootRecord, ContainerStatus
 from outpost.domain.transfer import ClientEndpoint, CopyIn, CopyOut, parse_copy, placement
-from outpost.domain.volumes import persist_path, volumes_for
+from outpost.domain.volumes import persist_path, persisted_paths, volumes_for
 
 SITE = Site(DnsName("dev.localhost"), 8443)
 
@@ -29,12 +30,9 @@ def test_environment_names_refused(name: str) -> None:
         EnvironmentName(name)
 
 
-def test_dns_names_compose_and_split() -> None:
+def test_dns_names_compose() -> None:
     domain = DnsName("dev.localhost")
     assert DnsName("api.feat-a").under(domain) == DnsName("api.feat-a.dev.localhost")
-    assert DnsName("api.feat-a.dev.localhost").relative_to(domain) == DnsName("api.feat-a")
-    assert DnsName("dev.localhost").relative_to(domain) is None
-    assert DnsName("api.example.com").relative_to(domain) is None
 
 
 @pytest.mark.parametrize("name", ["API", "-api", "api-", "a..b", "a_b", "a" * 64])
@@ -68,8 +66,6 @@ def test_upstreams_and_urls() -> None:
     assert (
         Site(DnsName("dev.example.com"), 443).url(DnsName("web")) == "https://web.dev.example.com"
     )
-    assert SITE.name_of("api.feat-a.dev.localhost") == DnsName("api.feat-a")
-    assert SITE.name_of("not a name") is None
 
 
 @pytest.mark.parametrize("text", ["api", "api:", ":80", "api:http", "api:70000", "a b:80"])
@@ -96,11 +92,36 @@ def test_default_volumes_then_persisted_paths() -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ["opt/tools", "/", "/home", "/home/dev/.cache", "/var/lib", "/proc/x", "/opt/../etc"]
+    "text",
+    ["opt/tools", "/", "/home", "/home/dev/.cache", "/var/lib", "/proc/x", "/opt/../etc", "/a:b"],
 )
 def test_persisted_paths_refused(text: str) -> None:
     with pytest.raises(InvalidValue):
         persist_path(text)
+
+
+def test_persisted_paths_travel_in_one_variable() -> None:
+    assert persisted_paths("/opt/tools:/srv/cache") == (
+        PurePosixPath("/opt/tools"),
+        PurePosixPath("/srv/cache"),
+    )
+    assert persisted_paths("") == ()
+
+
+def test_the_container_may_only_expose_its_loopback_port() -> None:
+    allowed = Published("127.0.0.1", "8443", "443/tcp")
+    clean = Exposure((Mount("volume", "/home/dev"),), "outpost", (allowed,))
+    assert exposure_problems(clean, SITE) == ()
+    leaky = Exposure(
+        (Mount("bind", "/var/run/docker.sock"), Mount("volume", "/workspaces")),
+        "host",
+        (allowed, Published("", "5432", "5432/tcp")),
+    )
+    assert exposure_problems(leaky, SITE) == (
+        "/var/run/docker.sock is mounted from the host",
+        "the container shares the host's network",
+        "0.0.0.0:5432->5432/tcp is published",
+    )
 
 
 def test_persisted_paths_cannot_overlap_each_other() -> None:

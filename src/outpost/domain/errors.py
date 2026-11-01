@@ -5,6 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 
+def last_line(text: str, default: str = "") -> str:
+    """The last non-empty line of a program's error output: usually the one that explains."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else default
+
+
 class OutpostError(Exception):
     """Base class of every deliberate Outpost error."""
 
@@ -26,7 +32,7 @@ class CommandFailed(OutpostError):
     """A command on your machine, on the host or in the container exited with an error."""
 
     def __init__(self, argv: Sequence[str], code: int, stderr: str) -> None:
-        detail = stderr.strip().splitlines()[-1] if stderr.strip() else "no error output"
+        detail = last_line(stderr, "no error output")
         super().__init__(f"`{' '.join(argv)}` exited with {code}: {detail}")
         self.argv = tuple(argv)
         self.code = code

@@ -15,3 +15,4 @@ Four named volumes always exist: `/home/dev`, `/workspaces`, `/var/lib/docker` a
 - Manual installs outside the volumes are lost on recreation; their place is the image, a feature or an init script.
 - Files the image puts in the home directory reach the home volume only when it is created.
 - `destroy` is the only command that removes volumes, after the environment's name is typed.
+- Every stop is graceful: the container has a 60-second stop timeout, its entrypoint stops the inner Docker on SIGTERM, and Outpost stops before it removes.

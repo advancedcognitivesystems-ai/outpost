@@ -10,6 +10,7 @@ from outpost.domain.host import SshHost
 from outpost.launcher.application.doctor import Finding
 from outpost.launcher.application.lifecycle import EnvironmentStatus
 from outpost.launcher.application.up import UpReport
+from outpost.launcher.ports.docker import ContainerState
 
 TRUST: dict[str, Sequence[str]] = {
     "darwin": (
@@ -40,7 +41,8 @@ def up_report(report: UpReport, env: Environment) -> str:
 
 
 def status(report: EnvironmentStatus, env: Environment) -> str:
-    lines = [f"{report.container} on {env.host}: {report.state}"]
+    detail = f" ({report.detail})" if report.detail and report.detail != report.state else ""
+    lines = [f"{report.container} on {env.host}: {report.state}{detail}"]
     if report.runtime is not None:
         runtime = report.runtime
         lines.append(f"  boot: {'ready' if runtime.ready else 'in progress'}")
@@ -48,6 +50,8 @@ def status(report: EnvironmentStatus, env: Environment) -> str:
         if runtime.init_failed:
             lines.append(f"  init scripts failed: {', '.join(runtime.init_failed)}")
     lines.append(f"  volumes: {', '.join(report.volumes) or 'none'}")
+    if report.state is ContainerState.RESTARTING:
+        lines.append("  it keeps restarting: see `./outpost logs`")
     if report.routes.strip():
         lines.append("Routes:")
         lines.extend(f"  {line}" for line in report.routes.strip().splitlines())

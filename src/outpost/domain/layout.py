@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 USER = "dev"
+ROOT_USER = "root"
 HOME = PurePosixPath("/home") / USER
 WORKSPACES = PurePosixPath("/workspaces")
 DOCKER_DATA = PurePosixPath("/var/lib/docker")
@@ -19,16 +20,20 @@ IMAGE_INIT_DIR = PurePosixPath("/etc/outpost/init.d")
 BOOT_RECORD = STATE / "boot.json"
 PROXY_STATE = STATE / "proxy"
 PROXY_BASE_CONFIG = PurePosixPath("/etc/outpost/caddy.json")
+ADMIN_SOCKET = PROXY_STATE / "admin" / "admin.sock"
+"""The proxy's admin API: a unix socket, reachable from the dev container only."""
 
 TOOL = "outpost"
 NETWORK = "outpost"
 PROXY_CONTAINER = "outpost-proxy"
 PROXY_LISTEN_PORT = 443
-ADMIN_PORT = 2019
+STOP_TIMEOUT_SECONDS = 60
+"""Time the inner Docker gets to stop the stacks when the container stops."""
 
 ENV_NAME = "OUTPOST_NAME"
 ENV_DOMAIN = "OUTPOST_DOMAIN"
 ENV_PORT = "OUTPOST_PORT"
+ENV_PERSIST = "OUTPOST_PERSIST"
 
 ENVIRONMENT_LABEL = "outpost.environment"
 SETTINGS_LABEL = "outpost.settings"

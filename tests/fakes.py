@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import PurePath, PurePosixPath
 from typing import IO
 
-from outpost.domain.commands import CommandResult
 from outpost.domain.credentials import LoginState, Tool
 from outpost.domain.devcontainer import DevContainerDefinition
 from outpost.domain.errors import Unavailable
+from outpost.domain.exposure import Exposure, Published
 from outpost.domain.host import SshHost
 from outpost.domain.init import Script
 from outpost.domain.names import DnsName, ImageRef
@@ -20,7 +20,8 @@ from outpost.domain.routes import Route
 from outpost.domain.secrets import Secret
 from outpost.domain.status import BootRecord, ContainerStatus
 from outpost.domain.volumes import Volume
-from outpost.launcher.ports.docker import ContainerInfo, ContainerState, DockerHost
+from outpost.infra.process import CommandResult
+from outpost.launcher.ports.docker import ContainerInfo, ContainerState
 
 type Events = list[str]
 
@@ -124,8 +125,8 @@ class FakeDocker:
         self.containers: dict[str, ContainerInfo] = {}
         self.images: set[str] = set()
         self.volume_labels: dict[str, dict[str, str]] = {}
-        self.exec_answers: dict[tuple[str, ...], CommandResult] = {("test", "-d"): failed()}
-        self.exec_calls: list[tuple[tuple[str, ...], str, str | None]] = []
+        self.directories: set[str] = set()
+        self.exposed = Exposure((), "outpost", (Published("127.0.0.1", "8443", "443/tcp"),))
         self.copies: list[tuple[str, str, str, str, str]] = []
         self.attached_code = 0
 
@@ -149,9 +150,8 @@ class FakeDocker:
         self.events.append(f"build {image}")
         self.images.add(image.value)
 
-    def load_image(self, image: ImageRef, source: DockerHost) -> None:
-        self.events.append(f"load {image} from {source.description}")
-        self.images.add(image.value)
+    def exposure(self, container: str) -> Exposure:
+        return self.exposed
 
     def ensure_volume(self, volume: Volume, labels: Mapping[str, str]) -> None:
         self.events.append(f"volume {volume.name}")
@@ -179,16 +179,11 @@ class FakeDocker:
         self.events.append(f"rm {container}")
         self.containers.pop(container, None)
 
-    def exec(
-        self, container: str, argv: Sequence[str], *, user: str, stdin: str | None = None
-    ) -> CommandResult:
-        self.exec_calls.append((tuple(argv), user, stdin))
-        self.events.append(f"exec {' '.join(argv)}")
-        matches = [p for p in self.exec_answers if tuple(argv[: len(p)]) == p]
-        if not matches:
-            return CommandResult(tuple(argv), 0)
-        found = self.exec_answers[max(matches, key=len)]
-        return CommandResult(tuple(argv), found.code, found.stdout, found.stderr)
+    def is_directory(self, container: str, path: PurePosixPath) -> bool:
+        return str(path) in self.directories
+
+    def reset_directory(self, container: str, path: PurePosixPath, *, user: str) -> None:
+        self.events.append(f"reset {path} for {user}")
 
     def exec_attached(
         self, container: str, argv: Sequence[str], *, user: str, workdir: PurePosixPath
@@ -210,6 +205,24 @@ class FakeDocker:
 
     def logs(self, container: str, *, follow: bool) -> int:
         return 0
+
+
+class FakeImages:
+    def __init__(self, events: Events, docker: FakeDocker, images: Sequence[str] = ()) -> None:
+        self.events = events
+        self.docker = docker
+        self.images = set(images)
+
+    @property
+    def description(self) -> str:
+        return "your Docker"
+
+    def available(self, image: ImageRef) -> bool:
+        return image.value in self.images
+
+    def send(self, image: ImageRef) -> None:
+        self.events.append(f"send {image}")
+        self.docker.images.add(image.value)
 
 
 class FakeDevContainer:
@@ -439,9 +452,21 @@ class FakeScripts:
 
 
 @dataclass
+class FakeOwnership:
+    events: Events
+
+    def claim_if_empty(self, path: PurePosixPath) -> None:
+        self.events.append(f"claim {path}")
+
+
+@dataclass
 class FakeStore:
     record: BootRecord = field(default_factory=lambda: BootRecord(ready=False))
     writes: list[BootRecord] = field(default_factory=list)
+    boot: str = "boot-1"
+
+    def current_boot(self) -> str:
+        return self.boot
 
     def read(self) -> BootRecord:
         return self.record

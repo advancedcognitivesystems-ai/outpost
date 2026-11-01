@@ -13,9 +13,18 @@ from outpost.domain.init import Script
 from outpost.domain.names import DnsName
 from outpost.domain.routes import Route, Site, Upstream
 from outpost.domain.status import BootRecord
-from tests.fakes import Events, FakeEngine, FakeProxy, FakeProxyRuntime, FakeScripts, FakeStore
+from tests.fakes import (
+    Events,
+    FakeEngine,
+    FakeOwnership,
+    FakeProxy,
+    FakeProxyRuntime,
+    FakeScripts,
+    FakeStore,
+)
 
 SITE = Site(DnsName("dev.localhost"), 8443)
+API = Route(DnsName("api.feat-a"), Upstream("feat-a-api-1", 8080))
 
 
 def routes(events: Events, containers: dict[str, list[str]]) -> tuple[Routes, FakeProxy]:
@@ -64,14 +73,33 @@ def scripts(events: Events, codes: dict[str, int] | None = None) -> FakeScripts:
     return FakeScripts(events, listing, codes or {})
 
 
-def test_boot_starts_the_proxy_then_runs_init_then_is_ready() -> None:
+def boot(events: Events, store: FakeStore, proxy: FakeProxy | None = None) -> Boot:
+    return Boot(
+        runtime=FakeProxyRuntime(events),
+        proxy=proxy or FakeProxy(events),
+        init=Init(scripts(events), store),
+        store=store,
+        ownership=FakeOwnership(events),
+        persisted=(PurePosixPath("/opt/tools"),),
+    )
+
+
+def test_boot_starts_the_proxy_reapplies_routes_then_inits_then_is_ready() -> None:
     events: Events = []
-    store = FakeStore(BootRecord(ready=True, init_digest="old"))
-    init = Init(scripts(events), store)
-    record = Boot(FakeProxyRuntime(events), FakeProxy(events), init, store).run()
-    assert events == ["proxy running", "proxy ready", "run 10-image.sh", "run 01-yours.sh"]
+    proxy = FakeProxy(events)
+    proxy.table[API.name.value] = API
+    store = FakeStore(BootRecord(ready=True, boot_id="boot-0", init_digest="old"))
+    record = boot(events, store, proxy).run()
+    assert events == [
+        "proxy running",
+        "proxy ready",
+        "put api.feat-a feat-a-api-1:8080",
+        "claim /opt/tools",
+        "run 10-image.sh",
+        "run 01-yours.sh",
+    ]
     assert store.writes[0].ready is False
-    assert record.ready
+    assert (record.ready, record.boot_id) == (True, "boot-1")
     assert record.init_digest != "old"
 
 
@@ -80,11 +108,34 @@ def test_a_proxy_that_does_not_start_still_lets_boot_finish() -> None:
     proxy = FakeProxy(events)
     proxy.fail_ready = True
     store = FakeStore()
-    boot = Boot(FakeProxyRuntime(events), proxy, Init(scripts(events), store), store)
     with pytest.raises(Unavailable):
-        boot.run()
+        boot(events, store, proxy).run()
     assert store.record.ready
     assert "run 01-yours.sh" in events
+
+
+def test_boot_ends_ready_even_when_init_breaks() -> None:
+    events: Events = []
+    store = FakeStore()
+    broken = Boot(
+        runtime=FakeProxyRuntime(events),
+        proxy=FakeProxy(events),
+        init=Init(BrokenScripts(), store),
+        store=store,
+        ownership=FakeOwnership(events),
+        persisted=(),
+    )
+    with pytest.raises(RuntimeError):
+        broken.run()
+    assert store.record.ready
+
+
+class BrokenScripts:
+    def listing(self) -> tuple[Script, ...]:
+        raise RuntimeError("unreadable init.d")
+
+    def run(self, script: Script) -> int:
+        return 0
 
 
 def test_init_reruns_only_when_the_scripts_changed() -> None:
@@ -100,12 +151,14 @@ def test_init_reruns_only_when_the_scripts_changed() -> None:
     assert events == ["run 10-image.sh", "run 01-yours.sh"]
 
 
-def test_status_counts_routes_of_a_running_proxy() -> None:
+def test_status_is_ready_only_for_this_start() -> None:
     proxy = FakeProxy([])
     proxy.put(Route(DnsName("api"), Upstream("x", 80)))
-    store = FakeStore(BootRecord(ready=True, init_failed=("01-a.sh",)))
+    store = FakeStore(BootRecord(ready=True, boot_id="boot-1", init_failed=("01-a.sh",)))
     report = Status(proxy, store).report()
     assert (report.ready, report.proxy_running, report.routes) == (True, True, 1)
     assert report.init_failed == ("01-a.sh",)
+    store.boot = "boot-2"
+    assert not Status(proxy, store).report().ready
     proxy.is_running = False
     assert Status(proxy, store).report().routes == 0

@@ -66,6 +66,7 @@ class Environment:
             name=self.name,
             site=self.site,
             volumes=self.volumes,
+            persist=self.persist,
             settings=self.devcontainer,
             root=self.root,
             base=base,

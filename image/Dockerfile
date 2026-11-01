@@ -10,7 +10,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       bash-completion ca-certificates curl git gnupg iptables less openssh-client \
-      python3 python3-venv sudo tar tini unzip; \
+      python3 sudo tar tini unzip; \
     rm -rf /var/lib/apt/lists/*
 
 # Docker Engine, for the inner Docker that runs the proxy and your stacks.
@@ -44,13 +44,14 @@ RUN set -eux; \
     install -d -o dev -g dev /workspaces; \
     install -d /var/lib/outpost /etc/outpost/init.d /var/log/outpost
 
-# The `outpost` tool, in its own virtual environment, outside the home volume.
-COPY pyproject.toml README.md /opt/outpost/src/
-COPY src /opt/outpost/src/src
-RUN set -eux; \
-    python3 -m venv /opt/outpost/venv; \
-    /opt/outpost/venv/bin/pip install --no-cache-dir /opt/outpost/src; \
-    ln -s /opt/outpost/venv/bin/outpost-container /usr/local/bin/outpost
+# The `outpost` tool: the in-container side of the package, standard library only, run by the
+# system Python. The launcher's code is not copied, so launcher changes never rebuild the image.
+COPY src/outpost/__init__.py /opt/outpost/lib/outpost/__init__.py
+COPY src/outpost/domain /opt/outpost/lib/outpost/domain
+COPY src/outpost/container /opt/outpost/lib/outpost/container
+COPY src/outpost/infra /opt/outpost/lib/outpost/infra
+COPY image/outpost /usr/local/bin/outpost
+RUN chmod 0755 /usr/local/bin/outpost
 
 COPY image/caddy.json /etc/outpost/caddy.json
 COPY image/entrypoint.sh /usr/local/lib/outpost/entrypoint

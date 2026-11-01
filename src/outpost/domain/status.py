@@ -7,12 +7,20 @@ from dataclasses import asdict, dataclass
 
 from outpost.domain.errors import InvalidValue
 
+INIT_SCRIPTS_FAILED = 3
+"""Exit code of `outpost init` when a script failed: reported, not an error of the tool."""
+
 
 @dataclass(frozen=True)
 class BootRecord:
-    """Kept in the state volume: whether boot finished, and the init scripts it last ran."""
+    """Kept in the state volume: whether boot finished, and the init scripts it last ran.
+
+    `boot_id` names the start it was written for: a record from an earlier start never
+    reads as ready.
+    """
 
     ready: bool
+    boot_id: str = ""
     init_digest: str = ""
     init_failed: tuple[str, ...] = ()
 
@@ -24,6 +32,7 @@ class BootRecord:
         data = _object(text)
         return cls(
             ready=bool(data.get("ready", False)),
+            boot_id=str(data.get("boot_id", "")),
             init_digest=str(data.get("init_digest", "")),
             init_failed=tuple(str(name) for name in _list(data.get("init_failed"))),
         )

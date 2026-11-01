@@ -74,13 +74,6 @@ class Site:
     def _port_suffix(self) -> str:
         return "" if self.port == HTTPS_PORT else f":{self.port}"
 
-    def name_of(self, hostname: str) -> DnsName | None:
-        """The route name a hostname stands for, or None when it is not under the domain."""
-        try:
-            return DnsName(hostname).relative_to(self.domain)
-        except InvalidValue:
-            return None
-
 
 def matches(name: DnsName, pattern: str) -> bool:
     """Whether a route name matches a pattern such as `api.feat-a` or `*.feat-a`."""

@@ -14,7 +14,7 @@ from outpost.domain.host import SshHost
 from outpost.infra.process import Runner, stderr_runner
 from outpost.launcher.adapters.base_image import CheckoutBaseImage
 from outpost.launcher.adapters.devcontainer_cli import DevContainerCliAdapter
-from outpost.launcher.adapters.docker_cli import DockerCli
+from outpost.launcher.adapters.docker_cli import DockerCli, ImagePipe
 from outpost.launcher.adapters.logins import login_source, tool_login
 from outpost.launcher.adapters.machine import (
     LocalFiles,
@@ -84,10 +84,11 @@ class Launcher:
         )
 
     @cached_property
-    def _local_docker(self) -> DockerCli | None:
+    def _images_from_you(self) -> ImagePipe | None:
         if not isinstance(self.env.host, SshHost):
             return None
-        return DockerCli(self._runner, description="your Docker")
+        mine = DockerCli(self._runner, description="your Docker")
+        return ImagePipe(self._runner, mine=mine, host=self._docker)
 
     @cached_property
     def _devcontainer(self) -> DevContainerCliAdapter:
@@ -115,7 +116,7 @@ class Launcher:
         return Up(
             self.env,
             docker=self._docker,
-            local_docker=self._local_docker,
+            images_from_you=self._images_from_you,
             devcontainer=self._devcontainer,
             runtime=self._runtime,
             base_image=CheckoutBaseImage(outpost_home(self._environ)),

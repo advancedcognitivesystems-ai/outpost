@@ -4,24 +4,25 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 
 import pytest
 
-from outpost.domain.commands import CommandResult
 from outpost.domain.credentials import Tool
 from outpost.domain.devcontainer import DevContainerSettings
 from outpost.domain.environment import Environment
-from outpost.domain.errors import Unavailable
+from outpost.domain.errors import CommandFailed, Unavailable
 from outpost.domain.host import SshHost
 from outpost.domain.names import ImageRef
 from outpost.domain.secrets import Secret
-from outpost.domain.status import ContainerStatus
+from outpost.domain.status import INIT_SCRIPTS_FAILED, ContainerStatus
 from outpost.domain.volumes import Volume
+from outpost.infra.process import CommandResult
 from outpost.launcher.adapters.archive import extract_archive, write_archive
 from outpost.launcher.adapters.base_image import CheckoutBaseImage
 from outpost.launcher.adapters.devcontainer_cli import DevContainerCliAdapter
-from outpost.launcher.adapters.docker_cli import DockerCli
+from outpost.launcher.adapters.docker_cli import DockerCli, ImagePipe
 from outpost.launcher.adapters.logins import (
     ClaudeLogin,
     CommandSource,
@@ -32,7 +33,7 @@ from outpost.launcher.adapters.logins import (
 from outpost.launcher.adapters.machine import SshTunnel, TerminalConsole
 from outpost.launcher.adapters.runtime import ToolRuntime
 from outpost.launcher.ports.docker import ContainerState
-from tests.fakes import FakeDocker, FakeRunner, failed, ok
+from tests.fakes import FakeRunner, failed, ok
 
 REMOTE = {"DOCKER_HOST": "ssh://dev@vm"}
 
@@ -67,7 +68,32 @@ def test_container_state_and_settings_digest() -> None:
     assert docker(runner).container("x").state is ContainerState.MISSING
     runner.answer(["docker", "container", "inspect"], ok("exited \n"))
     info = docker(runner).container("x")
-    assert (info.state, info.settings_digest) == (ContainerState.STOPPED, None)
+    assert (info.state, info.settings_digest, info.status) == (
+        ContainerState.STOPPED,
+        None,
+        "exited",
+    )
+    runner.answer(["docker", "container", "inspect"], ok("restarting abc\n"))
+    assert docker(runner).container("x").state is ContainerState.RESTARTING
+
+
+def test_exposure_reads_mounts_network_and_ports() -> None:
+    runner = FakeRunner()
+    inspected = {
+        "Mounts": [
+            {"Type": "volume", "Destination": "/home/dev"},
+            {"Type": "bind", "Destination": "/var/run/docker.sock"},
+        ],
+        "HostConfig": {
+            "NetworkMode": "bridge",
+            "PortBindings": {"443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
+        },
+    }
+    runner.answer(["docker", "container", "inspect"], ok(json.dumps(inspected)))
+    exposure = docker(runner).exposure("outpost-main")
+    assert [mount.kind for mount in exposure.mounts] == ["volume", "bind"]
+    assert exposure.network_mode == "bridge"
+    assert [str(item) for item in exposure.published] == ["127.0.0.1:8443->443/tcp"]
 
 
 def test_volumes_are_created_once_with_labels() -> None:
@@ -95,8 +121,8 @@ def test_secrets_reach_exec_through_stdin_only() -> None:
 
 def test_images_stream_from_your_docker_to_the_host() -> None:
     runner = FakeRunner()
-    local = DockerCli(runner, description="your Docker")
-    docker(runner).load_image(ImageRef("acme/dev:3"), local)
+    mine = DockerCli(runner, description="your Docker")
+    ImagePipe(runner, mine=mine, host=docker(runner)).send(ImageRef("acme/dev:3"))
     assert [(call.argv, call.env) for call in runner.calls] == [
         (("docker", "save", "acme/dev:3"), None),
         (("docker", "load"), REMOTE),
@@ -130,6 +156,18 @@ def test_copy_out_unpacks_under_the_new_name(tmp_path: Path) -> None:
     )
     assert runner.calls[0].argv[-5:] == ("-f", "-", "-C", "/workspaces", "report")
     assert (target / "copy" / "a.txt").read_text(encoding="utf-8") == "a"
+
+
+def test_an_unreadable_source_is_named(tmp_path: Path) -> None:
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "key").write_text("x", encoding="utf-8")
+    (secret / "key").chmod(0)
+    runner = FakeRunner()
+    if os.access(secret / "key", os.R_OK):
+        pytest.skip("running as root: every file is readable")
+    with pytest.raises(Unavailable, match="could not read"):
+        docker(runner).copy_in("c", secret, PurePosixPath("/tmp"), "secret", user="dev")
 
 
 def test_unsafe_archives_are_refused(tmp_path: Path) -> None:
@@ -182,35 +220,43 @@ def test_a_missing_devcontainer_cli_says_how_to_install_it(tmp_path: Path) -> No
 
 
 def test_wait_ready_polls_until_boot_finishes() -> None:
-    fake = FakeDocker([])
-    not_yet = ContainerStatus(ready=False, proxy_running=False, routes=0).to_json()
-    fake.exec_answers[("outpost", "status")] = ok(not_yet)
+    runner = FakeRunner()
+    status = ["docker", "exec", "--user", "dev", "outpost-main", "outpost", "status"]
+    not_yet = ContainerStatus(ready=False, proxy_running=False, routes=0)
+    runner.answer(status, ok(not_yet.to_json()))
     clock = iter([0.0, 1.0, 2.0, 3.0])
     sleeps: list[float] = []
 
     def sleep(seconds: float) -> None:
         sleeps.append(seconds)
-        ready = ContainerStatus(ready=True, proxy_running=True, routes=2).to_json()
-        fake.exec_answers[("outpost", "status")] = ok(ready)
+        runner.answer(
+            status, ok(ContainerStatus(ready=True, proxy_running=True, routes=2).to_json())
+        )
 
-    runtime = ToolRuntime(fake, sleep=sleep, clock=lambda: next(clock))
-    assert runtime.wait_ready("outpost-main", 60).routes == 2
+    tool = ToolRuntime(docker(runner), sleep=sleep, clock=lambda: next(clock))
+    assert tool.wait_ready("outpost-main", 60).routes == 2
     assert sleeps == [2.0]
 
 
 def test_an_image_without_the_tool_is_named() -> None:
-    fake = FakeDocker([])
-    fake.exec_answers[("outpost",)] = CommandResult(("outpost",), 127)
+    runner = FakeRunner()
+    runner.answer(["docker", "exec"], CommandResult((), 127))
     with pytest.raises(Unavailable, match="must derive from outpost/base"):
-        ToolRuntime(fake).status("outpost-main")
+        ToolRuntime(docker(runner)).status("outpost-main")
 
 
-def test_init_runs_as_root() -> None:
-    fake = FakeDocker([])
-    status = ContainerStatus(ready=True, proxy_running=True, routes=0)
-    fake.exec_answers[("outpost", "status")] = ok(status.to_json())
-    ToolRuntime(fake).run_init("outpost-main")
-    assert fake.exec_calls[0][:2] == (("outpost", "init", "--if-changed"), "root")
+def test_init_runs_as_root_on_the_terminal_and_failed_scripts_are_reported() -> None:
+    runner = FakeRunner()
+    failed_status = ContainerStatus(True, True, 0, init_failed=("01-a.sh",))
+    runner.answer(["docker", "exec"], ok(failed_status.to_json()))
+    runner.attached_codes[("docker", "exec")] = INIT_SCRIPTS_FAILED
+    assert ToolRuntime(docker(runner)).run_init("outpost-main").init_failed == ("01-a.sh",)
+    attached = runner.calls[0].argv
+    assert attached[attached.index("--user") + 1] == "root"
+    assert attached[-3:] == ("outpost", "init", "--if-changed")
+    runner.attached_codes[("docker", "exec")] = 2
+    with pytest.raises(CommandFailed):
+        ToolRuntime(docker(runner)).run_init("outpost-main")
 
 
 # ------------------------------------------------------------------ logins
@@ -227,32 +273,33 @@ def test_init_runs_as_root() -> None:
     ],
 )
 def test_claude_login_state(result: CommandResult, valid: bool, detail: str) -> None:
-    fake = FakeDocker([])
-    fake.exec_answers[("claude", "auth", "status")] = result
-    state = ClaudeLogin(fake, "outpost-main").state()
+    runner = FakeRunner()
+    runner.answer(["docker", "exec"], result)
+    state = ClaudeLogin(docker(runner), "outpost-main").state()
     assert state.valid is valid
     assert state.detail.startswith(detail)
 
 
 def test_claude_login_is_written_private() -> None:
-    fake = FakeDocker([])
-    ClaudeLogin(fake, "outpost-main").install(Secret('{"claudeAiOauth": {}}'))
-    argv, user, stdin = fake.exec_calls[0]
-    assert argv[-1] == "/home/dev/.claude/.credentials.json"
-    assert "umask 077" in argv[2]
-    assert (user, stdin) == ("dev", '{"claudeAiOauth": {}}')
+    runner = FakeRunner()
+    ClaudeLogin(docker(runner), "outpost-main").install(Secret('{"claudeAiOauth": {}}'))
+    call = runner.calls[0]
+    assert call.argv[-1] == "/home/dev/.claude/.credentials.json"
+    assert "umask 077" in call.argv[-3]
+    assert call.argv[3:5] == ("--user", "dev")
+    assert call.stdin == '{"claudeAiOauth": {}}'
 
 
 def test_gh_token_login_then_git_setup() -> None:
-    fake = FakeDocker([])
-    login = GithubLogin(fake, "outpost-main")
+    runner = FakeRunner()
+    login = GithubLogin(docker(runner), "outpost-main")
     login.install(Secret("gho_x"))
     login.finish()
-    assert [call[0][:3] for call in fake.exec_calls] == [
+    assert [call.argv[call.argv.index("gh") :][:3] for call in runner.calls] == [
         ("gh", "auth", "login"),
         ("gh", "auth", "setup-git"),
     ]
-    assert fake.exec_calls[0][2] == "gho_x\n"
+    assert runner.calls[0].stdin == "gho_x\n"
 
 
 def test_login_sources_per_platform(tmp_path: Path) -> None:
@@ -272,15 +319,18 @@ def test_login_sources_per_platform(tmp_path: Path) -> None:
 # ------------------------------------------------------------------ your machine
 
 
-def test_the_base_image_tag_follows_its_sources(tmp_path: Path) -> None:
+def test_the_base_image_tag_follows_the_container_side_only(tmp_path: Path) -> None:
     (tmp_path / "image").mkdir()
     (tmp_path / "image" / "Dockerfile").write_text("FROM ubuntu:24.04\n", encoding="utf-8")
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    for side in ("container", "launcher"):
+        (tmp_path / "src" / "outpost" / side).mkdir(parents=True)
+        (tmp_path / "src" / "outpost" / side / "a.py").write_text("x = 1\n", encoding="utf-8")
     first = CheckoutBaseImage(tmp_path).reference()
     assert first.value.startswith("outpost/base:")
+    (tmp_path / "src" / "outpost" / "launcher" / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("changed\n", encoding="utf-8")
     assert CheckoutBaseImage(tmp_path).reference() == first
-    (tmp_path / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "src" / "outpost" / "container" / "a.py").write_text("x = 2\n", encoding="utf-8")
     assert CheckoutBaseImage(tmp_path).reference() != first
     assert CheckoutBaseImage(tmp_path).dockerfile == tmp_path / "image" / "Dockerfile"
 

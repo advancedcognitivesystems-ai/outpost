@@ -52,13 +52,6 @@ class DnsName:
     def under(self, parent: DnsName) -> DnsName:
         return DnsName(f"{self.value}.{parent.value}")
 
-    def relative_to(self, parent: DnsName) -> DnsName | None:
-        """The part of this name before `parent`, or None when it is not under `parent`."""
-        suffix = f".{parent.value}"
-        if not self.value.endswith(suffix) or len(self.value) == len(suffix):
-            return None
-        return DnsName(self.value[: -len(suffix)])
-
     def __str__(self) -> str:
         return self.value
 

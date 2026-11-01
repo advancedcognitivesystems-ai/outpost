@@ -35,11 +35,14 @@ networks:
 
 ## Names
 
-- A route name is one or more DNS labels, such as `api.feat-a`, checked by [`DnsName`](../src/outpost/domain/names.py#L39-L63).
+- A route name is one or more DNS labels, such as `api.feat-a`, checked by [`DnsName`](../src/outpost/domain/names.py#L39-L56).
 - `<service>.<worktree>` scales: `outpost route rm '*.feat-a'` removes a worktree's routes, through [`Routes.remove`](../src/outpost/container/application/routes.py#L36-L47).
 
 ## Tools and init scripts
 
 - Tools belong in the image, through features or your Dockerfile, under `/usr/local` or `/opt`. The image's files under the home directory are copied into the home volume only when that volume is created.
-- Init scripts run as root at every start, after the inner Docker and the proxy, from [`ScriptDirectories`](../src/outpost/container/adapters/init_files.py#L21-L50): the image's `/etc/outpost/init.d` first, then yours. Executable scripts run directly, others with `sh`; `OUTPOST_USER` names the user.
-- Make them idempotent, and use `runuser -u dev --` for steps that must run as `dev`. A failure is recorded and reported; the container still starts.
+- Init scripts run as root at every start, after the inner Docker and the proxy, from [`ScriptDirectories`](../src/outpost/container/adapters/init_files.py#L22-L51): the image's `/etc/outpost/init.d` first, then yours. Executable scripts run directly, others with `sh`; `OUTPOST_USER` names the user.
+- Make them idempotent, and use `runuser -u dev --` for steps that must run as `dev`. A failure is recorded and reported by `up` and `status`; the container still starts.
+- At a start, their output goes to the container's log (`./outpost logs`); when `up` runs changed scripts, their output is on your terminal.
+- Lifecycle commands of devcontainer.json, such as `postCreateCommand`, may run before the inner Docker is ready: use init scripts for anything that needs Docker.
+- Persisted paths are handed to `dev` when their volume is new and empty, so tools and agents can write there.

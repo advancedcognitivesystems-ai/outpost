@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath
 
 import pytest
 
@@ -58,17 +58,19 @@ def test_outpost_owns_the_name_restart_policy_and_the_only_published_port() -> N
     run_args = define({"runArgs": ["--cpus=8"]})["runArgs"]
     assert isinstance(run_args, list)
     assert run_args[:1] == ["--cpus=8"]
-    assert run_args[1:9] == [
+    assert run_args[1:11] == [
         "--name",
         "outpost-main",
         "--restart",
         "unless-stopped",
+        "--stop-timeout",
+        "60",
         "--publish",
         "127.0.0.1:8443:443",
         "--label",
-        run_args[8],
+        run_args[10],
     ]
-    assert str(run_args[8]).startswith("outpost.settings=")
+    assert str(run_args[10]).startswith("outpost.settings=")
 
 
 def test_features_and_env_merge_key_by_key_and_null_removes() -> None:
@@ -141,6 +143,11 @@ def test_the_digest_follows_the_settings_not_the_folder() -> None:
         ({"runArgs": ["--mount", "type=bind,src=/x,dst=/y"]}, "devcontainer.runArgs[0]"),
         ({"runArgs": ["-p", "5432:5432"]}, "devcontainer.runArgs[0]"),
         ({"runArgs": ["--name=x"]}, "devcontainer.runArgs[0]"),
+        ({"runArgs": ["-tv", "/:/host"]}, "devcontainer.runArgs[0]"),
+        ({"runArgs": ["--network=host"]}, "devcontainer.runArgs[0]"),
+        ({"runArgs": ["--net", "host"]}, "devcontainer.runArgs[0]"),
+        ({"runArgs": ["--volumes-from", "cache"]}, "devcontainer.runArgs[0]"),
+        ({"runArgs": ["--stop-timeout=5"]}, "devcontainer.runArgs[0]"),
         ({"features": {"./my-feature": {}}}, "devcontainer.features../my-feature"),
         ({"containerEnv": {"OUTPOST_PORT": "1"}}, "devcontainer.containerEnv.OUTPOST_PORT"),
         ({"containerEnv": {"PORT": 1}}, "devcontainer.containerEnv.PORT"),
@@ -157,6 +164,15 @@ def test_refusals_name_the_key(settings: object, path: str) -> None:
     assert caught.value.path.startswith(path)
 
 
-def test_volumes_from_other_containers_are_not_host_mounts() -> None:
-    settings = DevContainerSettings.parse({"runArgs": ["--volumes-from", "cache"]}, "d")
-    assert settings.properties["runArgs"] == ["--volumes-from", "cache"]
+def test_harmless_run_args_pass() -> None:
+    run_args = ["--cpus=8", "-e", "VERBOSE=1", "-ePV=1", "--memory", "24g", "--shm-size=2g"]
+    assert DevContainerSettings.parse({"runArgs": run_args}, "d").properties["runArgs"] == run_args
+
+
+def test_persisted_paths_reach_the_container() -> None:
+    environment = Environment(
+        root=ROOT, persist=(PurePosixPath("/opt/tools"), PurePosixPath("/srv/cache"))
+    )
+    env = environment.definition(BASE).document["containerEnv"]
+    assert isinstance(env, dict)
+    assert env["OUTPOST_PERSIST"] == "/opt/tools:/srv/cache"

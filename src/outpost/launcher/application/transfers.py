@@ -6,12 +6,10 @@ from collections.abc import Sequence
 from pathlib import PurePath, PurePosixPath
 
 from outpost.domain.errors import InvalidValue, Unavailable
-from outpost.domain.layout import USER, USER_INIT_DIR
+from outpost.domain.layout import ROOT_USER, USER, USER_INIT_DIR
 from outpost.domain.transfer import CopyIn, CopyOut, placement
 from outpost.launcher.ports.docker import DockerHost
 from outpost.launcher.ports.machine import Files
-
-ROOT = "root"
 
 
 class Transfers:
@@ -43,11 +41,10 @@ class Transfers:
         """Replace the init scripts in the state volume, numbered in the order given."""
         for script in scripts:
             self._require(script)
-        reset = ["sh", "-c", 'rm -rf "$1" && mkdir -p "$1"', "sh", str(USER_INIT_DIR)]
-        self._docker.exec(self._container, reset, user=ROOT).check()
+        self._docker.reset_directory(self._container, USER_INIT_DIR, user=ROOT_USER)
         for index, script in enumerate(scripts, start=1):
             name = f"{index:02d}-{script.name}"
-            self._docker.copy_in(self._container, script, USER_INIT_DIR, name, user=ROOT)
+            self._docker.copy_in(self._container, script, USER_INIT_DIR, name, user=ROOT_USER)
 
     def _copy_in(self, source: PurePath, directory: PurePosixPath, name: str) -> str:
         self._docker.copy_in(self._container, source, directory, name, user=USER)
@@ -58,7 +55,7 @@ class Transfers:
             raise Unavailable(f"{path} does not exist on your machine")
 
     def _is_container_dir(self, path: PurePosixPath) -> bool:
-        return self._docker.exec(self._container, ["test", "-d", str(path)], user=USER).ok
+        return self._docker.is_directory(self._container, path)
 
 
 def _name(path: PurePath) -> str:

@@ -17,8 +17,8 @@ from outpost.domain.errors import CommandFailed
 from outpost.domain.layout import HOME, USER
 from outpost.domain.secrets import Secret
 from outpost.infra.process import Runner
+from outpost.launcher.adapters.docker_cli import DockerCli
 from outpost.launcher.ports.credentials import LoginSource, ToolLogin
-from outpost.launcher.ports.docker import DockerHost
 
 CLAUDE_CREDENTIALS = PurePosixPath(".claude/.credentials.json")
 KEYCHAIN_SERVICE = "Claude Code-credentials"
@@ -62,7 +62,7 @@ class CommandSource:
 
 
 class _InContainer:
-    def __init__(self, docker: DockerHost, container: str) -> None:
+    def __init__(self, docker: DockerCli, container: str) -> None:
         self._docker = docker
         self._container = container
 
@@ -149,7 +149,7 @@ def login_source(
             return CommandSource(runner, ["gh", "auth", "token"], "`gh auth token`")
 
 
-def tool_login(tool: Tool, docker: DockerHost, container: str) -> ToolLogin:
+def tool_login(tool: Tool, docker: DockerCli, container: str) -> ToolLogin:
     match tool:
         case Tool.CLAUDE:
             return ClaudeLogin(docker, container)

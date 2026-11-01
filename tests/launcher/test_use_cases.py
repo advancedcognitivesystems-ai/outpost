@@ -29,7 +29,6 @@ from tests.fakes import (
     FakeRuntime,
     FakeSource,
     FakeTunnel,
-    ok,
 )
 
 ENV = Environment(root=Path("/home/me/project"))
@@ -97,7 +96,7 @@ def test_copy_into_a_folder_or_as_a_new_name() -> None:
 def test_copy_into_an_existing_container_folder_without_a_slash() -> None:
     copies, docker = transfers([])
     assert copies.copy(parse_copy("notes.md", ":/workspaces/n.md")) == ":/workspaces/n.md"
-    docker.exec_answers[("test", "-d")] = ok()
+    docker.directories.add("/workspaces")
     assert copies.copy(parse_copy("notes.md", ":/workspaces")) == ":/workspaces/notes.md"
 
 
@@ -147,6 +146,9 @@ def test_stop_and_down_keep_the_volumes() -> None:
     assert not running.stop()
     assert running.down()
     assert docker.events == ["stop outpost-main", "rm outpost-main"]
+    restarting, docker = lifecycle(ContainerState.RESTARTING)
+    assert restarting.down()
+    assert docker.events == ["stop outpost-main", "rm outpost-main"]
     assert "outpost-main-home" in docker.volume_labels
 
 
@@ -157,7 +159,11 @@ def test_destroy_needs_the_name_typed() -> None:
     assert docker.events == []
     agreed, docker = lifecycle(ContainerState.RUNNING, text="main")
     assert agreed.destroy(assume_yes=False) == ("outpost-main-home", "outpost-main-state")
-    assert docker.events == ["rm outpost-main", "rm volumes outpost-main-home outpost-main-state"]
+    assert docker.events == [
+        "stop outpost-main",
+        "rm outpost-main",
+        "rm volumes outpost-main-home outpost-main-state",
+    ]
     assert list(docker.volume_labels) == ["outpost-other-home"]
 
 

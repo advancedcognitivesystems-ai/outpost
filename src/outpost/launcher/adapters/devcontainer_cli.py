@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path, PurePath
 
-from outpost.domain.commands import COMMAND_NOT_FOUND
 from outpost.domain.devcontainer import DevContainerDefinition
 from outpost.domain.errors import CommandFailed, Unavailable
-from outpost.infra.process import Runner
+from outpost.infra.process import COMMAND_NOT_FOUND, Runner
+from outpost.launcher.ports.devcontainer import INSTALL
 
-INSTALL = "npm install -g @devcontainers/cli"
 CONFIG_FILE = "devcontainer.json"
 
 

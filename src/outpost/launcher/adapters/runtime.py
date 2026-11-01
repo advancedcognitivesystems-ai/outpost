@@ -4,21 +4,22 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from pathlib import PurePosixPath
 
-from outpost.domain.commands import CommandResult
-from outpost.domain.errors import Unavailable
-from outpost.domain.layout import TOOL, USER
-from outpost.domain.status import ContainerStatus
-from outpost.launcher.ports.docker import DockerHost
+from outpost.domain.errors import CommandFailed, Unavailable
+from outpost.domain.layout import ROOT_USER, TOOL, USER
+from outpost.domain.status import INIT_SCRIPTS_FAILED, ContainerStatus
+from outpost.infra.process import COMMAND_NOT_FOUND, CommandResult
+from outpost.launcher.adapters.docker_cli import DockerCli
 
-ROOT = "root"
 POLL_SECONDS = 2.0
+NO_IMAGE_TOOL = "{container} has no `{tool}` tool: its image must derive from outpost/base"
 
 
 class ToolRuntime:
     def __init__(
         self,
-        docker: DockerHost,
+        docker: DockerCli,
         *,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -48,7 +49,14 @@ class ToolRuntime:
         return self._tool(container, ["route", "ls"]).check().stdout
 
     def run_init(self, container: str) -> ContainerStatus:
-        self._tool(container, ["init", "--if-changed"], user=ROOT).check()
+        argv = [TOOL, "init", "--if-changed"]
+        code = self._docker.exec_attached(
+            container, argv, user=ROOT_USER, workdir=PurePosixPath("/")
+        )
+        if code == COMMAND_NOT_FOUND:
+            raise Unavailable(NO_IMAGE_TOOL.format(container=container, tool=TOOL))
+        if code not in (0, INIT_SCRIPTS_FAILED):
+            raise CommandFailed(argv, code, "see the output above")
         return self.status(container)
 
     def root_certificate(self, container: str) -> str:
@@ -57,7 +65,5 @@ class ToolRuntime:
     def _tool(self, container: str, argv: Sequence[str], *, user: str = USER) -> CommandResult:
         result = self._docker.exec(container, [TOOL, *argv], user=user)
         if result.missing_command:
-            raise Unavailable(
-                f"{container} has no `{TOOL}` tool: its image must derive from outpost/base"
-            )
+            raise Unavailable(NO_IMAGE_TOOL.format(container=container, tool=TOOL))
         return result

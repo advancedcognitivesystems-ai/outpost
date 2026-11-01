@@ -8,24 +8,30 @@ from functools import cached_property
 
 from outpost.container.adapters.caddy import CaddyAdmin
 from outpost.container.adapters.docker_engine import DockerEngine
-from outpost.container.adapters.init_files import JsonBootStore, ScriptDirectories
+from outpost.container.adapters.init_files import (
+    DirectoryOwnership,
+    JsonBootStore,
+    ScriptDirectories,
+)
 from outpost.container.adapters.proxy_container import CaddyContainer
 from outpost.container.application.boot import Boot, Init, Status
 from outpost.container.application.routes import Routes
-from outpost.domain.layout import DEFAULT_DOMAIN, DEFAULT_PORT, ENV_DOMAIN, ENV_PORT
+from outpost.domain.layout import DEFAULT_DOMAIN, DEFAULT_PORT, ENV_DOMAIN, ENV_PERSIST, ENV_PORT
 from outpost.domain.names import DnsName, port_number
 from outpost.domain.routes import Site
+from outpost.domain.volumes import persisted_paths
 from outpost.infra.process import SubprocessRunner
 
 
-class Tool:
+class InContainer:
+    """Everything the tool needs, read from the variables the launcher sets in devcontainer.json."""
+
     def __init__(self, environ: Mapping[str, str] = os.environ) -> None:
         self._environ = environ
         self._runner = SubprocessRunner()
 
     @cached_property
     def site(self) -> Site:
-        """From the variables the launcher sets in devcontainer.json."""
         domain = DnsName(self._environ.get(ENV_DOMAIN, DEFAULT_DOMAIN))
         return Site(domain, port_number(int(self._environ.get(ENV_PORT, DEFAULT_PORT))))
 
@@ -45,7 +51,14 @@ class Tool:
         return Routes(self.site, self._proxy, DockerEngine(self._runner))
 
     def boot(self) -> Boot:
-        return Boot(CaddyContainer(self._runner), self._proxy, self._init, self._store)
+        return Boot(
+            runtime=CaddyContainer(self._runner),
+            proxy=self._proxy,
+            init=self._init,
+            store=self._store,
+            ownership=DirectoryOwnership(),
+            persisted=persisted_paths(self._environ.get(ENV_PERSIST, "")),
+        )
 
     def init(self) -> Init:
         return self._init

@@ -1,8 +1,9 @@
 # The build context of outpost/base: what image/Dockerfile copies, nothing else.
 *
 !image/
-!src/
-!pyproject.toml
-!README.md
+!src/outpost/__init__.py
+!src/outpost/domain/
+!src/outpost/container/
+!src/outpost/infra/
 **/__pycache__
 **/*.pyc

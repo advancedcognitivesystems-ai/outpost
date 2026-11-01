@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import tomllib
 from pathlib import Path
 
-from outpost.container.adapters.caddy import SERVER
+from outpost.container.adapters.caddy import SERVER, SOCKET_DIR_IN_PROXY
 from outpost.domain.layout import (
-    ADMIN_PORT,
-    BOOT_RECORD,
+    ADMIN_SOCKET,
     IMAGE_INIT_DIR,
     PROXY_BASE_CONFIG,
     PROXY_LISTEN_PORT,
@@ -22,6 +22,7 @@ from outpost.launcher.adapters.base_image import SOURCES
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 IMAGE = REPOSITORY / "image"
+IN_CONTAINER = ("domain", "container", "infra")
 
 
 def text(name: str) -> str:
@@ -33,9 +34,12 @@ def test_caddy_serves_the_server_the_adapter_edits() -> None:
     server = config["apps"]["http"]["servers"][SERVER]
     assert server["listen"] == [f":{PROXY_LISTEN_PORT}"]
     assert server["routes"] == []
-    assert config["admin"]["listen"].endswith(f":{ADMIN_PORT}")
-    assert f"127.0.0.1:{ADMIN_PORT}" in config["admin"]["origins"]
     assert config["apps"]["pki"]["certificate_authorities"]["local"]["install_trust"] is False
+
+
+def test_the_admin_api_is_a_socket_never_a_tcp_port() -> None:
+    listen = json.loads(text("caddy.json"))["admin"]["listen"]
+    assert listen.startswith(f"unix/{SOCKET_DIR_IN_PROXY}/{ADMIN_SOCKET.name}")
 
 
 def test_the_dockerfile_creates_the_user_and_the_paths() -> None:
@@ -46,18 +50,33 @@ def test_the_dockerfile_creates_the_user_and_the_paths() -> None:
     assert f"COPY image/caddy.json {PROXY_BASE_CONFIG}" in dockerfile
 
 
-def test_the_tool_on_the_path_is_the_in_container_entry_point() -> None:
+def test_the_tool_on_the_path_runs_the_in_container_entry_point() -> None:
     scripts = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))
-    entry = scripts["project"]["scripts"]["outpost-container"]
-    assert entry == "outpost.container.cli.main:main"
-    assert f"/opt/outpost/venv/bin/outpost-container /usr/local/bin/{TOOL}" in text("Dockerfile")
+    module = scripts["project"]["scripts"]["outpost-container"].split(":")[0]
+    assert f"-m {module} " in text("outpost")
+    assert f"COPY image/outpost /usr/local/bin/{TOOL}" in text("Dockerfile")
 
 
-def test_the_entrypoint_resets_the_record_then_boots() -> None:
+def test_the_image_gets_the_in_container_side_and_nothing_else() -> None:
+    dockerfile = text("Dockerfile")
+    for package in IN_CONTAINER:
+        assert f"COPY src/outpost/{package} /opt/outpost/lib/outpost/{package}" in dockerfile
+    assert "src/outpost/launcher" not in dockerfile
+    for package in IN_CONTAINER:
+        for module in (REPOSITORY / "src" / "outpost" / package).rglob("*.py"):
+            for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    parts = node.module.split(".")
+                    copied = parts[0] != "outpost" or len(parts) == 1 or parts[1] in IN_CONTAINER
+                    assert copied, (module, node.module)
+                    assert parts[0] != "yaml", module
+
+
+def test_the_entrypoint_stops_the_inner_engine_then_boots() -> None:
     entrypoint = text("entrypoint.sh")
-    assert f"rm -f {BOOT_RECORD}" in entrypoint
+    assert "trap stop TERM INT" in entrypoint
+    assert 'kill -TERM "$dockerd_pid"' in entrypoint
     assert f"{TOOL} boot" in entrypoint
-    assert (IMAGE / "entrypoint.sh").stat().st_mode & 0o111 or "chmod 0755" in text("Dockerfile")
 
 
 def test_the_build_context_is_what_the_digest_covers() -> None:

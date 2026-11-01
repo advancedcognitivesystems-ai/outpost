@@ -11,11 +11,9 @@ from outpost.domain.environment import Environment
 from outpost.domain.errors import Unavailable
 from outpost.domain.host import SshHost
 from outpost.launcher.ports.credentials import LoginSource
-from outpost.launcher.ports.devcontainer import DevContainerCli
+from outpost.launcher.ports.devcontainer import INSTALL, DevContainerCli
 from outpost.launcher.ports.docker import DockerHost
 from outpost.launcher.ports.machine import Programs
-
-DEVCONTAINER_INSTALL = "npm install -g @devcontainers/cli"
 
 
 class Severity(StrEnum):
@@ -67,7 +65,7 @@ class Doctor:
     def _devcontainer_cli(self) -> Finding:
         version = self._devcontainer.version()
         if version is None:
-            return Finding("Dev Container CLI", Severity.FAIL, f"not found: {DEVCONTAINER_INSTALL}")
+            return Finding("Dev Container CLI", Severity.FAIL, f"not found: {INSTALL}")
         return Finding("Dev Container CLI", Severity.OK, version)
 
     def _host(self) -> Finding:

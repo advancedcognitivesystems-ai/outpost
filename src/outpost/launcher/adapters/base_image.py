@@ -9,7 +9,13 @@ from pathlib import Path
 from outpost.domain.devcontainer import base_image
 from outpost.domain.names import ImageRef
 
-SOURCES = ("image", "src", "pyproject.toml", "README.md")
+SOURCES = (
+    "image",
+    "src/outpost/__init__.py",
+    "src/outpost/domain",
+    "src/outpost/container",
+    "src/outpost/infra",
+)
 """What the Dockerfile copies; `.dockerignore` keeps the build context to the same list."""
 SKIPPED = ("__pycache__",)
 

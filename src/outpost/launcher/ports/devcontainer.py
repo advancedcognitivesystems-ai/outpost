@@ -7,6 +7,8 @@ from typing import Protocol
 
 from outpost.domain.devcontainer import DevContainerDefinition
 
+INSTALL = "npm install -g @devcontainers/cli"
+
 
 class DevContainerCli(Protocol):
     def version(self) -> str | None:

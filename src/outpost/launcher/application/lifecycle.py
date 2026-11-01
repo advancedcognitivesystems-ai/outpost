@@ -11,11 +11,14 @@ from outpost.launcher.ports.docker import ContainerState, DockerHost
 from outpost.launcher.ports.machine import Console
 from outpost.launcher.ports.runtime import ContainerRuntime
 
+_ALIVE = (ContainerState.RUNNING, ContainerState.RESTARTING)
+
 
 @dataclass(frozen=True)
 class EnvironmentStatus:
     container: str
     state: ContainerState
+    detail: str
     volumes: tuple[str, ...]
     runtime: ContainerStatus | None
     routes: str
@@ -32,7 +35,7 @@ class Lifecycle:
 
     def stop(self) -> bool:
         """Stop the container; its disk stays exactly as it is. False when it was not running."""
-        if self._state() is not ContainerState.RUNNING:
+        if self._state() not in _ALIVE:
             return False
         self._docker.stop(self._env.container)
         return True
@@ -41,7 +44,7 @@ class Lifecycle:
         """Remove the container and keep the volumes. False when there was no container."""
         if self._state() is ContainerState.MISSING:
             return False
-        self._docker.remove(self._env.container)
+        self._remove()
         return True
 
     def destroy(self, *, assume_yes: bool) -> tuple[str, ...]:
@@ -55,22 +58,28 @@ class Lifecycle:
             if self._console.ask(question).strip() != self._env.name.value:
                 raise Declined("nothing was removed")
         if self._state() is not ContainerState.MISSING:
-            self._docker.remove(self._env.container)
+            self._remove()
         if volumes:
             self._docker.remove_volumes(volumes)
         return volumes
 
     def status(self) -> EnvironmentStatus:
-        state = self._state()
-        running = state is ContainerState.RUNNING
         container = self._env.container
+        info = self._docker.container(container)
+        running = info.state is ContainerState.RUNNING
         return EnvironmentStatus(
             container=container,
-            state=state,
+            state=info.state,
+            detail=info.status,
             volumes=self._docker.volumes(self._env.labels),
             runtime=self._runtime.status(container) if running else None,
             routes=self._runtime.routes(container) if running else "",
         )
+
+    def _remove(self) -> None:
+        """Stop first, so the inner Docker stops the stacks cleanly, then remove."""
+        self.stop()
+        self._docker.remove(self._env.container)
 
     def _state(self) -> ContainerState:
         return self._docker.container(self._env.container).state

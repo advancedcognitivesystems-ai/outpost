@@ -12,21 +12,23 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath
 
 from outpost.domain.errors import ConfigError, InvalidValue
 from outpost.domain.layout import (
     ENV_DOMAIN,
     ENV_NAME,
+    ENV_PERSIST,
     ENV_PORT,
     PROXY_LISTEN_PORT,
     SETTINGS_LABEL,
+    STOP_TIMEOUT_SECONDS,
     USER,
     WORKSPACES,
 )
 from outpost.domain.names import EnvironmentName, ImageRef
 from outpost.domain.routes import Site
-from outpost.domain.volumes import Volume
+from outpost.domain.volumes import PERSIST_SEPARATOR, Volume
 
 type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
 
@@ -40,6 +42,7 @@ DIGEST_LENGTH = 12
 _HOST_MOUNTS = "mounts from the host are not allowed; use `persist` or `outpost cp`"
 _COMPOSE = "compose-based dev containers are not supported"
 _PUBLISH = "the proxy's port is the only published port; register a route instead"
+_NETWORK = "the container keeps its own network, so nothing is published by accident"
 OWNED_KEYS: dict[str, str] = {
     "name": "Outpost names the container outpost-<name>",
     "workspaceMount": "the workspace is the volume on /workspaces",
@@ -63,9 +66,15 @@ REFUSED_RUN_ARGS: dict[str, str] = {
     "--publish": _PUBLISH,
     "-P": _PUBLISH,
     "--publish-all": _PUBLISH,
+    "--volumes-from": "it would inherit another container's mounts; " + _HOST_MOUNTS,
+    "--network": _NETWORK,
+    "--net": _NETWORK,
     "--name": "Outpost names the container",
     "--restart": "Outpost sets --restart unless-stopped",
+    "--stop-timeout": "Outpost gives the inner Docker time to stop the stacks",
 }
+_SHORT_WITH_VALUE = frozenset("acehlmuw")
+"""Short flags of `docker run` that take a value: what follows them in a group is that value."""
 
 
 def base_image(sources_digest: str) -> ImageRef:
@@ -161,13 +170,17 @@ def _check_env(value: Json, path: str) -> None:
 
 
 def refused_run_arg(token: str) -> str | None:
-    """The flag a `runArgs` item uses that Outpost refuses, or None."""
-    for flag in REFUSED_RUN_ARGS:
-        if flag.startswith("--"):
-            if token == flag or token.startswith(f"{flag}="):
-                return flag
-        elif token.startswith(flag) and not token.startswith("--"):
-            return flag
+    """The flag a `runArgs` item uses that Outpost refuses, or None; `-tv` counts as `-v`."""
+    if token.startswith("--"):
+        name = token.split("=", 1)[0]
+        return name if name in REFUSED_RUN_ARGS else None
+    if not token.startswith("-"):
+        return None
+    for letter in token[1:]:
+        if f"-{letter}" in REFUSED_RUN_ARGS:
+            return f"-{letter}"
+        if letter in _SHORT_WITH_VALUE:
+            return None
     return None
 
 
@@ -220,13 +233,14 @@ def define(
     name: EnvironmentName,
     site: Site,
     volumes: Sequence[Volume],
+    persist: Sequence[PurePosixPath],
     settings: DevContainerSettings,
     root: PurePath,
     base: ImageRef,
 ) -> DevContainerDefinition:
     """Merge your settings over the defaults, add what Outpost owns, then stamp the digest."""
     merged = _merge({"image": base.value, "features": {CLAUDE_CODE_FEATURE: {}}}, settings)
-    document = _with_owned(merged, name, site, volumes, base)
+    document = _with_owned(merged, name, site, volumes, persist, base)
     digest = hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
     digest = digest[:DIGEST_LENGTH]
     run_args = document["runArgs"]
@@ -266,6 +280,7 @@ def _with_owned(
     name: EnvironmentName,
     site: Site,
     volumes: Sequence[Volume],
+    persist: Sequence[PurePosixPath],
     base: ImageRef,
 ) -> dict[str, Json]:
     document: dict[str, Json] = {"name": name.container}
@@ -294,6 +309,7 @@ def _with_owned(
         ENV_NAME: name.value,
         ENV_DOMAIN: site.domain.value,
         ENV_PORT: str(site.port),
+        ENV_PERSIST: PERSIST_SEPARATOR.join(str(path) for path in persist),
     }
     run_args = merged.get("runArgs")
     document["runArgs"] = [
@@ -302,6 +318,8 @@ def _with_owned(
         name.container,
         "--restart",
         "unless-stopped",
+        "--stop-timeout",
+        str(STOP_TIMEOUT_SECONDS),
         "--publish",
         f"127.0.0.1:{site.port}:{PROXY_LISTEN_PORT}",
     ]

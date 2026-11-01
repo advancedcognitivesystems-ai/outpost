@@ -63,7 +63,7 @@ Registry logins stay on your machine: after `az acr login --name <registry>` or 
 | Chrome on Linux | `certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n outpost -i outpost-ca.pem` |
 | Firefox | Settings, Certificates, Import |
 
-`./outpost ca` prints the commands for your system, from [`trust_instructions`](../src/outpost/launcher/cli/render.py#L64-L72). The root survives recreation; only `destroy` makes a new one.
+`./outpost ca` prints the commands for your system, from [`trust_instructions`](../src/outpost/launcher/cli/render.py#L68-L76). The root survives recreation; only `destroy` makes a new one.
 
 ## Names in the browser
 

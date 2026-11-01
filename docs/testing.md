@@ -20,12 +20,13 @@ Use cases are tested through in-memory fakes of their ports; adapters are tested
 | `tests/domain` | Names, hosts, routes, volumes, copies, status, devcontainer generation | Plain values; every refusal names its key |
 | `tests/launcher` | Configuration, `up`, logins, copies, lifecycle, access, doctor, adapters, CLI | Fakes for use cases; `FakeRunner` and real files for adapters |
 | `tests/container` | Routes, boot, init, status, the Caddy client, the proxy's container, scripts, CLI | Fakes; a local stand-in of Caddy's API |
+| `tests/infra` | The real runner on real processes: large outputs, programs that cannot start | Real subprocesses |
 | `tests/image` | `image/` agrees with the layout, the Caddy adapter and the digest | Reads the files |
 | `tests/test_doc_references.py` | Every code link in the docs | Fails on a stale line range |
 
 ## Fakes
 
-`tests/fakes.py` holds one fake per port and a [`FakeRunner`](../tests/fakes.py#L47-L113) answering by the longest matching argument prefix. Launcher fakes share an event log, so a test can assert the order of effects, as in [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](../tests/launcher/test_up.py#L64-L88).
+`tests/fakes.py` holds one fake per port and a [`FakeRunner`](../tests/fakes.py#L48-L114) answering by the longest matching argument prefix. Launcher fakes share an event log, so a test can assert the order of effects, as in [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](../tests/launcher/test_up.py#L69-L93).
 
 ## Not covered yet
 
@@ -35,5 +36,5 @@ No test talks to a real Docker engine, SSH host, registry or Caddy. Before calli
 2. `./outpost shell`; `claude` is logged in with the claude.ai login and lists your claude.ai connectors; `gh auth status` succeeds.
 3. In the container, `docker run -d --name hello traefik/whoami`, then `outpost route add hello hello:80`; open the URL from your browser, after `./outpost ca` and, remotely, `./outpost tunnel`.
 4. `./outpost cp` in and out, with a file and a folder.
-5. Restart the host: the container, the proxy, the route and the stack come back on their own.
+5. Restart the host: the container, the proxy, the route and the stack come back on their own; a database in a stack was stopped cleanly (its log shows a normal shutdown).
 6. Change `devcontainer` in `outpost.yaml`, run `./outpost up`, accept the recreation: logins, routes and `/workspaces` are still there.

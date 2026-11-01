@@ -16,18 +16,19 @@ The file is found by [`locate`](../src/outpost/launcher/config/loader.py#L26-L34
 | `init` | None | Scripts copied into the state volume and run in order, as root, at every start |
 | `credentials` | `[claude, gh]` | Logins checked and copied on every `up`; `[]` skips both |
 | `copy` | None | A path of yours to a container path, copied on every `up`; `~` in the target is `/home/dev` |
-| `persist` | None | More absolute container paths kept in volumes |
+| `persist` | None | More absolute container paths kept in volumes; a new, empty one is handed to `dev` |
 
 Paths on your machine are relative to the folder of `outpost.yaml`. The generated devcontainer.json goes to `.outpost/<name>/` in that folder; `./outpost config` prints it.
 
 ## The devcontainer settings
 
-The defaults are the default image and the Claude Code feature. Your settings are checked by [`DevContainerSettings.parse`](../src/outpost/domain/devcontainer.py#L86-L103) and merged by [`define`](../src/outpost/domain/devcontainer.py#L218-L240):
+The defaults are the default image and the Claude Code feature. Your settings are checked by [`DevContainerSettings.parse`](../src/outpost/domain/devcontainer.py#L95-L112) and merged by [`define`](../src/outpost/domain/devcontainer.py#L231-L254):
 
 - Your keys replace the defaults, except `features` and `containerEnv`, merged key by key; `null` removes a default entry.
 - `build` replaces `image`. Its `dockerfile` and `context` are relative to `outpost.yaml`, and the build argument `OUTPOST_BASE` names the default image, for `ARG OUTPOST_BASE` then `FROM ${OUTPOST_BASE}`.
 - Images must derive from `outpost/base`: the inner Docker, the proxy and the `outpost` tool come from it.
 - Features come from a registry; local features are refused.
+- After editing a Dockerfile used by `build`, run `./outpost up --recreate`: the settings digest covers the settings, not the Dockerfile.
 
 ## What Outpost sets and refuses
 
@@ -37,12 +38,16 @@ The defaults are the default image and the Claude Code feature. Your settings ar
 | `mounts` | Outpost's volumes | Add volumes with `persist` |
 | `privileged` | `true` | The inner Docker needs it |
 | `overrideCommand` | `false` | The image's entrypoint runs at every start |
-| `remoteUser` | `dev` | Logins, copies and shells belong to this user |
+| `remoteUser`, `containerUser` | `dev`, the image's root | Logins, copies and shells belong to dev; the entrypoint runs as root |
 | `updateRemoteUserUID` | `false` | No bind mount to match |
-| `runArgs` | `--name`, `--restart unless-stopped`, `--publish 127.0.0.1:<port>:443`, `--label outpost.settings=<digest>` | Identity, reboot recovery, the only published port, recreation |
-| `containerEnv` `OUTPOST_*` | Name, domain, port | Read by the `outpost` tool |
+| `appPort` | None | The proxy's port is the only published port |
+| `dockerComposeFile`, `service`, `runServices` | None | Compose-based dev containers are not supported |
+| `runArgs` | `--name`, `--restart unless-stopped`, `--stop-timeout 60`, `--publish 127.0.0.1:<port>:443`, `--label outpost.settings=<digest>` | Identity, reboot recovery, a clean stop of the stacks, the only published port, recreation |
+| `containerEnv` `OUTPOST_*` | Name, domain, port, persisted paths | Read by the `outpost` tool |
 
-Setting one of these is an error naming the key, from [`OWNED_KEYS`](../src/outpost/domain/devcontainer.py#L43-L57). So are `-v`, `--volume`, `--mount`, `-p`, `--publish`, `--name` and `--restart` in `runArgs`, from [`REFUSED_RUN_ARGS`](../src/outpost/domain/devcontainer.py#L58-L68).
+Setting one of these is an error naming the key, from [`OWNED_KEYS`](../src/outpost/domain/devcontainer.py#L46-L60). In `runArgs`, the flags in [`REFUSED_RUN_ARGS`](../src/outpost/domain/devcontainer.py#L61-L75) are refused too, grouped short flags such as `-tv` included: mounts (`-v`, `--volume`, `--mount`, `--volumes-from`), published ports (`-p`, `--publish`, `-P`), the network (`--network`, `--net`), and what Outpost sets (`--name`, `--restart`, `--stop-timeout`).
+
+Features and image metadata can add mounts of their own. `up` therefore checks the running container too, and removes it, volumes kept, when it has a bind mount, the host's network or another published port.
 
 ## Logins
 

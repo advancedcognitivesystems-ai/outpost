@@ -12,8 +12,8 @@ Outpost is now a dev container framework: one container is the entry point, loca
 
 - `./outpost` commands: `up`, `stop`, `down`, `destroy`, `status`, `shell`, `exec`, `cp`, `logs`, `ca`, `tunnel`, `config`, `doctor`.
 - `outpost` inside the container: `route add|rm|ls`, `ca`, `status`, and `boot` and `init` for the entrypoint.
-- The default image `outpost/base` in `image/`: inner Docker, the GitHub CLI, the `outpost` tool, an entrypoint run at every start, Caddy's base config.
-- A generated devcontainer.json, merged from your settings, run with the reference Dev Container CLI; bind mounts and published ports are refused.
+- The default image `outpost/base` in `image/`: inner Docker, the GitHub CLI, the `outpost` tool (standard library only), an entrypoint run at every start that stops the inner Docker cleanly, Caddy's base config with its admin API on a unix socket.
+- A generated devcontainer.json, merged from your settings, run with the reference Dev Container CLI; bind mounts, published ports and the host network are refused in the settings, and checked again on the running container.
 - Four named volumes and `persist`; a settings digest that makes `up` ask before recreating.
 - Copies in and out as tar streams through `docker exec`.
 - Claude Code and GitHub CLI logins checked in the container and copied from your machine when missing.

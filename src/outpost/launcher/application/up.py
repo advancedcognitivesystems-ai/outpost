@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from outpost.domain.credentials import LoginState
 from outpost.domain.devcontainer import DevContainerDefinition
 from outpost.domain.environment import Environment
+from outpost.domain.errors import ConfigError
+from outpost.domain.exposure import exposure_problems
 from outpost.domain.names import DnsName
 from outpost.domain.status import ContainerStatus
 from outpost.launcher.application.logins import Logins
 from outpost.launcher.application.transfers import Transfers
 from outpost.launcher.ports.devcontainer import DevContainerCli
-from outpost.launcher.ports.docker import ContainerState, DockerHost
+from outpost.launcher.ports.docker import ContainerState, DockerHost, ImageTransfer
 from outpost.launcher.ports.machine import BaseImageSource, Console
 from outpost.launcher.ports.runtime import ContainerRuntime
 
@@ -38,7 +40,7 @@ class Up:
         env: Environment,
         *,
         docker: DockerHost,
-        local_docker: DockerHost | None,
+        images_from_you: ImageTransfer | None,
         devcontainer: DevContainerCli,
         runtime: ContainerRuntime,
         base_image: BaseImageSource,
@@ -48,7 +50,7 @@ class Up:
     ) -> None:
         self._env = env
         self._docker = docker
-        self._local_docker = local_docker
+        self._images_from_you = images_from_you
         self._devcontainer = devcontainer
         self._runtime = runtime
         self._base_image = base_image
@@ -67,7 +69,10 @@ class Up:
         for volume in self._env.volumes:
             self._docker.ensure_volume(volume, self._env.labels)
         recreate = self._must_recreate(definition, recreate, assume_yes)
+        if recreate:
+            self._docker.stop(self._env.container)
         self._devcontainer.up(definition, self._env.workdir, self._env.id_label, recreate=recreate)
+        self._refuse_exposure()
         booted = self._runtime.wait_ready(self._env.container, READY_TIMEOUT)
         if not booted.proxy_running:
             self._console.warn("the proxy is not running; see `./outpost logs`")
@@ -77,9 +82,7 @@ class Up:
         self._transfers.sync_init(self._env.init_scripts)
         status = self._runtime.run_init(self._env.container)
         if status.init_failed:
-            self._console.warn(
-                f"init scripts failed: {', '.join(status.init_failed)}; see `./outpost logs`"
-            )
+            self._console.warn(f"init scripts failed: {', '.join(status.init_failed)}")
         return UpReport(status, logins, self._env.site.url(EXAMPLE_ROUTE), recreate)
 
     def _ensure_images(self, definition: DevContainerDefinition) -> None:
@@ -91,15 +94,29 @@ class Up:
                     base, self._base_image.context, self._base_image.dockerfile
                 )
         image = definition.image
-        local = self._local_docker
+        mine = self._images_from_you
         if (
             image is not None
-            and local is not None
+            and mine is not None
             and not self._docker.image_exists(image)
-            and local.image_exists(image)
+            and mine.available(image)
         ):
-            self._console.info(f"copying {image} from {local.description} to the host")
-            self._docker.load_image(image, local)
+            self._console.info(f"copying {image} from {mine.description} to the host")
+            mine.send(image)
+
+    def _refuse_exposure(self) -> None:
+        """Features and image metadata may add mounts: refuse the container if they did."""
+        container = self._env.container
+        problems = exposure_problems(self._docker.exposure(container), self._env.site)
+        if not problems:
+            return
+        self._docker.stop(container)
+        self._docker.remove(container)
+        raise ConfigError(
+            "devcontainer",
+            f"the container was removed, its volumes kept: {'; '.join(problems)}. "
+            "A feature or the image asks for it; remove that feature or change the image.",
+        )
 
     def _must_recreate(
         self, definition: DevContainerDefinition, asked: bool, assume_yes: bool

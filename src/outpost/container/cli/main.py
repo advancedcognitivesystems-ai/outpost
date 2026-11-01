@@ -9,32 +9,33 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from outpost import __version__
-from outpost.container.cli.wiring import Tool
+from outpost.container.cli.wiring import InContainer
 from outpost.domain.errors import InvalidValue, OutpostError
 from outpost.domain.names import DnsName
 from outpost.domain.routes import Upstream
+from outpost.domain.status import INIT_SCRIPTS_FAILED
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
 
-Handler = Callable[[Tool, argparse.Namespace], int]
+Handler = Callable[[InContainer, argparse.Namespace], int]
 if TYPE_CHECKING:
     Subcommands = argparse._SubParsersAction[argparse.ArgumentParser]
 
 
-def route_add(tool: Tool, args: argparse.Namespace) -> int:
+def route_add(tool: InContainer, args: argparse.Namespace) -> int:
     print(tool.routes().add(DnsName(args.name), Upstream.parse(args.upstream)))
     return EXIT_OK
 
 
-def route_rm(tool: Tool, args: argparse.Namespace) -> int:
+def route_rm(tool: InContainer, args: argparse.Namespace) -> int:
     for name in tool.routes().remove(args.names):
         print(f"removed {name}")
     return EXIT_OK
 
 
-def route_ls(tool: Tool, args: argparse.Namespace) -> int:
+def route_ls(tool: InContainer, args: argparse.Namespace) -> int:
     listing = tool.routes().listing()
     if args.json:
         rows = [
@@ -51,12 +52,12 @@ def route_ls(tool: Tool, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def ca(tool: Tool, args: argparse.Namespace) -> int:
+def ca(tool: InContainer, args: argparse.Namespace) -> int:
     print(tool.root_certificate(), end="")
     return EXIT_OK
 
 
-def status(tool: Tool, args: argparse.Namespace) -> int:
+def status(tool: InContainer, args: argparse.Namespace) -> int:
     report = tool.status().report()
     if args.json:
         print(report.to_json(), end="")
@@ -68,15 +69,18 @@ def status(tool: Tool, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def boot(tool: Tool, args: argparse.Namespace) -> int:
+def boot(tool: InContainer, args: argparse.Namespace) -> int:
     record = tool.boot().run()
     print(f"outpost: ready ({len(record.init_failed)} init scripts failed)", file=sys.stderr)
     return EXIT_OK
 
 
-def init(tool: Tool, args: argparse.Namespace) -> int:
+def init(tool: InContainer, args: argparse.Namespace) -> int:
     record = tool.init().run(only_if_changed=args.if_changed)
-    return EXIT_FAILURE if record.init_failed else EXIT_OK
+    if record.init_failed:
+        print(f"outpost: init scripts failed: {', '.join(record.init_failed)}", file=sys.stderr)
+        return INIT_SCRIPTS_FAILED
+    return EXIT_OK
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,11 +119,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handler: Handler = args.handler
     try:
-        return handler(Tool(), args)
+        return handler(InContainer(), args)
     except InvalidValue as error:
         print(f"outpost: {error}", file=sys.stderr)
         return EXIT_USAGE
-    except OutpostError as error:
+    except PermissionError as error:
+        print(f"outpost: {error}; `boot` and `init` run as root", file=sys.stderr)
+        return EXIT_FAILURE
+    except (OutpostError, OSError) as error:
         print(f"outpost: {error}", file=sys.stderr)
         return EXIT_FAILURE
 

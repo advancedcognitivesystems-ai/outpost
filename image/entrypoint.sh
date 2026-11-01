@@ -1,11 +1,9 @@
 #!/bin/sh
 # Entrypoint of outpost/base, run at every start of the container, whoever starts it:
 # prepares cgroups, starts the inner Docker engine, then `outpost boot` starts the proxy and
-# runs the init scripts. The container lives as long as the inner engine.
+# runs the init scripts. The container lives as long as the inner engine, which logs to
+# /var/log/outpost/dockerd.log.
 set -eu
-
-# The record of the last run would say "ready" before this boot has finished.
-rm -f /var/lib/outpost/boot.json
 
 # cgroup v2 nesting, as moby's hack/dind does: move this group's processes into a child group,
 # then delegate the controllers, or the inner engine cannot create containers.
@@ -21,6 +19,15 @@ rm -f /var/run/docker.pid /var/run/docker/containerd/containerd.pid
 mkdir -p /var/log/outpost
 dockerd > /var/log/outpost/dockerd.log 2>&1 &
 dockerd_pid=$!
+
+# Stopping the container stops the inner engine first, which stops the stacks cleanly; the
+# container's stop timeout, set by Outpost, gives it the time.
+stop() {
+  kill -TERM "$dockerd_pid" 2> /dev/null || true
+  wait "$dockerd_pid" || true
+  exit 0
+}
+trap stop TERM INT
 
 tries=0
 until docker info > /dev/null 2>&1; do

@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     cp = command("cp", commands.cp, "copy in or out; the container side starts with ':'")
     cp.add_argument("source")
     cp.add_argument("destination")
-    logs = command("logs", commands.logs, "the container's log: boot, inner Docker, init")
+    logs = command("logs", commands.logs, "the container's log: boot and init at each start")
     logs.add_argument("-f", "--follow", action="store_true", help="keep following")
     ca = command("ca", commands.ca, "save the proxy's root certificate and show how to trust it")
     ca.add_argument("--out", type=Path, default=Path(CA_FILE), help=f"default: ./{CA_FILE}")
@@ -72,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Declined as error:
         print(f"outpost: declined: {error}", file=sys.stderr)
         return EXIT_DECLINED
-    except OutpostError as error:
+    except (OutpostError, OSError) as error:
         print(f"outpost: {error}", file=sys.stderr)
         return commands.EXIT_FAILURE
     except KeyboardInterrupt:

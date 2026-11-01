@@ -1,20 +1,23 @@
 """`Proxy` through Caddy's admin API: one route object per name, addressed by its `@id`.
 
+The API listens on a unix socket shared with the dev container only, never on TCP: on a
+wildcard address Caddy skips its Host check, and every stack container would reach it.
 Caddy saves every change made through the API and restores it at start (`caddy run --resume`),
 so routes outlive restarts of the proxy and of the dev container.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from outpost.domain.errors import InvalidValue, Unavailable
-from outpost.domain.layout import ADMIN_PORT
+from outpost.domain.layout import ADMIN_SOCKET
 from outpost.domain.names import DnsName
 from outpost.domain.routes import Route, Site, Upstream
 
@@ -23,6 +26,8 @@ SERVER = "outpost"
 ROUTES_PATH = f"/config/apps/http/servers/{SERVER}/routes"
 ROUTE_ID_PREFIX = "outpost-route-"
 CA_PATH = "/pki/ca/local"
+SOCKET_DIR_IN_PROXY = "/run/outpost"
+"""Where the proxy container sees the socket's folder; `image/caddy.json` listens there."""
 POLL_SECONDS = 0.5
 
 type JsonObject = dict[str, object]
@@ -80,22 +85,33 @@ class _Reply:
         return json.loads(self.body) if self.body.strip() else None
 
 
+class _UnixConnection(http.client.HTTPConnection):
+    def __init__(self, path: Path, timeout: float) -> None:
+        super().__init__("localhost", timeout=timeout)
+        self._path = path
+
+    def connect(self) -> None:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout)
+        connection.connect(str(self._path))
+        self.sock = connection
+
+
 class CaddyAdmin:
     def __init__(
         self,
         *,
-        base_url: str = f"http://127.0.0.1:{ADMIN_PORT}",
+        site: Site,
+        socket_path: Path = Path(ADMIN_SOCKET),
         timeout: float = 10.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
-        site: Site,
     ) -> None:
-        self._base_url = base_url
+        self._site = site
+        self._socket = socket_path
         self._timeout = timeout
         self._sleep = sleep
         self._clock = clock
-        self._site = site
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def running(self) -> bool:
         try:
@@ -107,7 +123,7 @@ class CaddyAdmin:
         deadline = self._clock() + timeout
         while not self.running():
             if self._clock() >= deadline:
-                raise Unavailable(f"the proxy's API did not answer at {self._base_url}")
+                raise Unavailable(f"the proxy's API did not answer on {self._socket}")
             self._sleep(POLL_SECONDS)
 
     def routes(self) -> tuple[Route, ...]:
@@ -143,13 +159,16 @@ class CaddyAdmin:
     def _request(self, method: str, path: str, body: object = None) -> _Reply:
         data = None if body is None else json.dumps(body).encode()
         headers = {} if body is None else {"Content-Type": "application/json"}
-        request = urllib.request.Request(self._base_url + path, data, headers, method=method)
+        connection = _UnixConnection(self._socket, self._timeout)
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                return _Reply(response.status, response.read())
-        except urllib.error.HTTPError as error:
-            return _Reply(error.code, error.read())
-        except (urllib.error.URLError, OSError) as error:
+            connection.request(method, path, data, headers)
+            response = connection.getresponse()
+            return _Reply(response.status, response.read())
+        except PermissionError:
+            raise Unavailable(f"{self._socket} is reserved to root and the docker group") from None
+        except OSError as error:
             raise Unavailable(
-                f"the proxy's API does not answer at {self._base_url}: {error}"
+                f"the proxy's API does not answer on {self._socket}: {error}"
             ) from None
+        finally:
+            connection.close()
