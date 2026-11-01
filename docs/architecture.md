@@ -26,7 +26,7 @@ your machine                         host (local Docker, or a Linux VM over SSH)
 6. Runs `devcontainer up` with the file [`define`](../src/outpost/domain/devcontainer.py#L231-L254) builds, through [`DevContainerCliAdapter`](../src/outpost/launcher/adapters/devcontainer_cli.py#L16-L55).
 7. Checks what the container actually exposes, since features and image metadata can add mounts: a bind mount, the host's network or another published port removes it again, by [`exposure_problems`](../src/outpost/domain/exposure.py#L42-L53).
 8. Waits until the boot record says ready for this start of the container.
-9. Checks and copies the logins, with [`Logins`](../src/outpost/launcher/application/logins.py#L12-L53).
+9. Checks and copies the logins, with [`Logins`](../src/outpost/launcher/application/logins.py#L13-L60).
 10. Copies the `copy` entries, replaces the init scripts, and runs them if they changed, with their output on your terminal.
 
 ## Inside the container, at every start

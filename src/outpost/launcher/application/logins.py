@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from outpost.domain.credentials import LoginState
+from outpost.domain.errors import OutpostError
 from outpost.launcher.ports.credentials import LoginSource, ToolLogin
 from outpost.launcher.ports.machine import Console
 
@@ -37,7 +38,13 @@ class Logins:
         if secret is None:
             self._console.info(f"{login.tool}: no login to copy from {source.description}")
             return state
-        login.install(secret)
+        try:
+            login.install(secret)
+        except OutpostError as error:
+            self._console.warn(
+                f"{login.tool}: the login from {source.description} was refused: {error}"
+            )
+            return state
         copied = login.state()
         if copied.valid:
             self._console.info(f"{login.tool}: login copied from {source.description}")

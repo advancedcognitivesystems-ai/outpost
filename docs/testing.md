@@ -30,7 +30,7 @@ Use cases are tested through in-memory fakes of their ports; adapters are tested
 
 ## Not covered yet
 
-No test talks to a real Docker engine, SSH host, registry or Caddy. Before calling a version done, run this by hand on a local host and on a remote VM:
+No automated test talks to a real Docker engine, SSH host, registry or Caddy. Before calling a version done, run this by hand on a local host and on a remote VM:
 
 1. `./outpost doctor`, then `./outpost up` from nothing, then `./outpost up` again: nothing changes.
 2. `./outpost shell`; `claude` is logged in with the claude.ai login and lists your claude.ai connectors; `gh auth status` succeeds.
@@ -38,3 +38,6 @@ No test talks to a real Docker engine, SSH host, registry or Caddy. Before calli
 4. `./outpost cp` in and out, with a file and a folder.
 5. Restart the host: the container, the proxy, the route and the stack come back on their own; a database in a stack was stopped cleanly (its log shows a normal shutdown).
 6. Change `devcontainer` in `outpost.yaml`, run `./outpost up`, accept the recreation: logins, routes and `/workspaces` are still there.
+7. Add the feature `ghcr.io/devcontainers/features/docker-outside-of-docker:1`: `up` removes the container, keeps the volumes, and names the host mount.
+
+Last run on 2026-11-01, on a local Linux host (Docker 29.9, cgroup v1): items 1, 3, 4, 6 and 7 passed, and a stop took 2 s with the inner engine shutting down cleanly. Not yet run: real Claude Code and GitHub logins (item 2), a host reboot (item 5), a remote host.

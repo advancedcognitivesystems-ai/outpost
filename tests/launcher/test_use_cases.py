@@ -54,6 +54,14 @@ def test_a_missing_login_is_copied_from_your_machine() -> None:
     assert login.installed == [Secret("token")]
 
 
+def test_a_refused_copy_is_reported_then_a_login_offered() -> None:
+    login = FakeLogin(Tool.GITHUB, [OUT, IN], refuse=True)
+    console = FakeConsole(answers=(True,))
+    assert Logins(console, []).ensure(FakeSource(Secret("bad")), login).valid
+    assert login.events == ["install gh", "login gh", "finish gh"]
+    assert any("was refused" in warning for warning in console.warnings)
+
+
 def test_without_a_login_to_copy_one_is_offered() -> None:
     login = FakeLogin(Tool.CLAUDE, [OUT, IN])
     console = FakeConsole(answers=(True,))

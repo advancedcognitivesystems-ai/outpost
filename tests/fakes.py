@@ -11,7 +11,7 @@ from typing import IO
 
 from outpost.domain.credentials import LoginState, Tool
 from outpost.domain.devcontainer import DevContainerDefinition
-from outpost.domain.errors import Unavailable
+from outpost.domain.errors import CommandFailed, Unavailable
 from outpost.domain.exposure import Exposure, Published
 from outpost.domain.host import SshHost
 from outpost.domain.init import Script
@@ -340,8 +340,12 @@ class FakeLogin:
     def state(self) -> LoginState:
         return self.states.pop(0) if len(self.states) > 1 else self.states[0]
 
+    refuse: bool = False
+
     def install(self, secret: Secret) -> None:
         self.events.append(f"install {self.tool}")
+        if self.refuse:
+            raise CommandFailed(["gh", "auth", "login"], 1, "the token is not valid")
         self.installed.append(secret)
 
     def login(self) -> None:

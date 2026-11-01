@@ -4,6 +4,10 @@ All notable changes to Outpost. The format follows [Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Fixed
+
+- A login your machine has but the container refuses is reported, and a login is offered, instead of stopping `up`.
+
 ## [0.2.0] - 2026-11-01
 
 Outpost is now a dev container framework: one container is the entry point, locally or on a remote host. See [ADR 0001](docs/adr/0001-dev-container-framework.md).
