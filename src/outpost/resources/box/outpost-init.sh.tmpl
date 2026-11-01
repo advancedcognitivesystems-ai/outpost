@@ -1,0 +1,21 @@
+#!/bin/sh
+# Box entrypoint: starts the inner Docker engine, then the router, then the box's command.
+# Stacks started with `restart: unless-stopped` come back on their own once the engine is up.
+set -eu
+
+if ! docker info >/dev/null 2>&1; then
+  dockerd >/var/log/dockerd.log 2>&1 &
+  tries=0
+  until docker info >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "outpost-init: the inner Docker engine did not start; see /var/log/dockerd.log" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+fi
+
+{{router_bootstrap}}
+
+exec "$@"

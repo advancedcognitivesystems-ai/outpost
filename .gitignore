@@ -1,0 +1,22 @@
+# Local configuration: copy outpost.example.yaml to outpost.yaml
+/outpost.yaml
+/outpost-ca.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

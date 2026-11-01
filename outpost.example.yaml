@@ -1,0 +1,86 @@
+version: 1
+
+project:
+  name: acme                                  # prefixes every host object: outpost-acme-*
+  repository: git@github.com:acme/platform.git
+  default_branch: main
+
+default_target: azure                         # --target overrides it
+
+targets:
+  wsl:
+    connection:
+      kind: local                             # local | ssh
+    host:
+      isolation: privileged                   # sysbox | privileged
+      state_dir: ~/.outpost                   # on the host
+      min_free_disk_gb: 60
+    edge:
+      domain: dev.localhost                   # routes: <service>--<worktree>.dev.localhost
+      listen: 127.0.0.1
+      tls:
+        kind: local-ca                        # acme | local-ca | none
+    image:                                    # replaces box.image for this target
+      source: local                           # local | registry
+      ref: acme/dotnet-dev:latest
+
+  azure:
+    connection:
+      kind: ssh
+      host: dev-vm.westeurope.cloudapp.azure.com
+      user: dev
+      port: 22
+      identity_file: ~/.ssh/id_ed25519        # optional, your ssh config applies too
+    host:
+      isolation: sysbox
+      state_dir: ~/.outpost
+      min_free_disk_gb: 200
+    edge:
+      domain: dev.acme.example
+      listen: 100.64.0.10                     # VPN interface; 0.0.0.0 only behind an NSG allowlist
+      tls:
+        kind: acme
+        email: platform@acme.example
+        dns_provider: azuredns                # a lego DNS provider name
+        dns_env_file: ~/.config/outpost/azuredns.env   # on the client, copied to the host
+
+box:
+  image:
+    source: registry
+    ref: acmecr.azurecr.io/dev/dotnet-dev:2026.10
+    registry_auth:
+      kind: azure-acr                         # none | docker-login | azure-acr
+      registry: acmecr
+  user: dev
+  cpus: 16
+  memory_gb: 64
+  env:                                        # plain settings only, secrets are refused
+    DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+stacks:
+  compose_files:                              # relative to each worktree
+    - deploy/compose.yaml
+  expose:
+    - service: web
+      port: 8080
+    - service: api
+      port: 5000
+    - service: identity
+      port: 5001
+      subdomain: auth                         # default: the service name
+
+credentials:
+  claude:
+    strategy: copy                            # copy | login | skip
+    source:
+      kind: auto                              # auto | file | keychain | command | env
+  github:
+    strategy: copy                            # copy | token | login | skip
+    source:
+      kind: command
+      command: [gh, auth, token]
+    token_env: OUTPOST_GH_TOKEN               # read by strategy: token
+    setup_git: true
+  git:
+    user_name: Jane Doe
+    user_email: jane@acme.example

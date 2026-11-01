@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Single entry point. Bootstraps Python with uv, then hands over to the CLI.
+set -euo pipefail
+
+OUTPOST_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export OUTPOST_HOME
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "outpost: uv is required to run Outpost." >&2
+  echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  exit 1
+fi
+
+exec uv run --quiet --frozen --project "$OUTPOST_HOME" outpost "$@"

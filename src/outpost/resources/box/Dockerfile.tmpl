@@ -1,0 +1,48 @@
+# Box image: the configured base image plus what Outpost needs inside it.
+# Rendered by Outpost from src/outpost/resources/box/Dockerfile.tmpl; edit the template, not this file.
+FROM {{base_image}}
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISABLE_AUTOUPDATER=1
+
+# Outpost supports Debian and Ubuntu based images.
+RUN set -eux; \
+    command -v apt-get >/dev/null || { echo "Outpost needs a Debian or Ubuntu based image" >&2; exit 1; }; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl git gnupg iptables sudo tmux; \
+    rm -rf /var/lib/apt/lists/*
+
+# Docker Engine and the compose plugin, for the stacks.
+RUN set -eux; \
+    curl -fsSL https://get.docker.com | sh; \
+    rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI, from its official apt repository.
+RUN set -eux; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh; \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code, installed outside the home volume so that image updates reach it.
+RUN set -eux; \
+    mkdir -p /opt/claude; \
+    curl -fsSL https://claude.ai/install.sh | HOME=/opt/claude bash; \
+    ln -sf /opt/claude/.local/bin/claude /usr/local/bin/claude
+
+# The box user, allowed to use Docker and sudo.
+RUN set -eux; \
+    id -u {{user}} >/dev/null 2>&1 || useradd --create-home --shell /bin/bash {{user}}; \
+    usermod -aG docker {{user}}; \
+    echo "{{user}} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/outpost; \
+    chmod 0440 /etc/sudoers.d/outpost
+
+COPY outpost-init.sh /usr/local/bin/outpost-init
+RUN chmod 0755 /usr/local/bin/outpost-init
+
+ENTRYPOINT ["/usr/local/bin/outpost-init"]
+CMD ["sleep", "infinity"]

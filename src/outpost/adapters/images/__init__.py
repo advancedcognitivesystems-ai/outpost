@@ -1,0 +1,1 @@
+"""`ImageSupplier` and `RegistryAuth` adapters."""

@@ -1,0 +1,9 @@
+# Everything is text with LF endings, so scripts run unchanged in WSL, Linux and macOS.
+* text=auto eol=lf
+
+outpost text eol=lf
+*.sh text eol=lf
+*.tmpl text eol=lf
+
+*.png binary
+*.jpg binary
