@@ -1,1 +1,0 @@
-"""`SecretSource` and `ToolAuth` adapters."""

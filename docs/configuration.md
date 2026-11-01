@@ -1,61 +1,51 @@
 # Configuration
 
-One file, `outpost.yaml`, describes the environment. It stays out of git; [`outpost.example.yaml`](../outpost.example.yaml) is its template and shows every key with its accepted values. Shared sections hold the project, the box, the stacks and the credentials; `targets` hold what differs per host, and `--target` or `default_target` picks one.
+Every key is optional: without `outpost.yaml`, `./outpost up` runs on your local Docker with the default image and both logins. [`outpost.example.yaml`](../outpost.example.yaml) shows every key.
 
-The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L102-L117) into [`OutpostConfig`](../src/outpost/domain/config.py#L246-L268). Unknown keys are refused, and every error names the exact key at fault.
+The file is found by [`locate`](../src/outpost/launcher/config/loader.py#L26-L34) (`--config`, then `$OUTPOST_CONFIG`, then `./outpost.yaml`) and read by [`parse`](../src/outpost/launcher/config/loader.py#L47-L71). Unknown keys are refused, and every error names its key.
 
-## Reference
+## Keys
 
-| Key | Values | Default | Meaning |
-| --- | --- | --- | --- |
-| `version` | `1` | Required | Schema version |
-| `project.name` | Lowercase letters, digits, `-` (30 max) | Required | Prefix of every host object, `outpost-<name>-*` |
-| `project.repository` | HTTPS Git URL | Required | Cloned into `/workspaces/<name>/repo` on the first `up`; git authenticates through gh |
-| `project.default_branch` | Branch name | `main` | Base of new worktrees |
-| `default_target` | A key of `targets` | The only target | Used when `--target` is absent |
-| `targets.<t>.connection.kind` | `local`, `ssh` | Required | How the client runs host commands |
-| `targets.<t>.connection.host`, `user`, `port`, `identity_file` | | `ssh` only; port `22` | Passed to OpenSSH; your ssh config still applies |
-| `targets.<t>.host.isolation` | `sysbox`, `privileged` | `sysbox` | Runtime of the box |
-| `targets.<t>.host.state_dir` | Absolute path or `~/…` on the host | `~/.outpost` | Rendered settings, secrets (0600), exchange directory |
-| `targets.<t>.host.min_free_disk_gb` | Integer | `50` | `doctor` fails below it |
-| `targets.<t>.edge.domain` | DNS name with a dot | Required | Routes are `<service>--<worktree>.<domain>` |
-| `targets.<t>.edge.listen` | IP address | `127.0.0.1` | Address the edge binds on the host |
-| `targets.<t>.edge.ports.http`, `https` | Ports | `80`, `443` | Host ports of the edge |
-| `targets.<t>.edge.tls.kind` | `acme`, `local-ca`, `none` | `local-ca` | Source of the wildcard certificate |
-| `targets.<t>.edge.tls.email`, `dns_provider`, `dns_env_file` | | `acme` only | ACME account, DNS-01 provider (a lego provider name), client file with its credentials |
-| `targets.<t>.image` | Same shape as `box.image` | None | Replaces `box.image` for that target |
-| `box.image.source` | `registry`, `local` | Required | Pull on the host, or copy from the client's Docker |
-| `box.image.ref` | Image reference | Required | Base image the box is built on (Debian or Ubuntu based) |
-| `box.image.registry_auth.kind` | `none`, `docker-login`, `azure-acr` | `none` | How the host logs in before pulling; `registry` source only |
-| `box.image.registry_auth.registry`, `username`, `password_env` | | Per kind | ACR name; or registry host, user and the client env var holding the password |
-| `box.user` | Lowercase Unix user name | `dev` | User inside the box, owner of `/workspaces` |
-| `box.cpus`, `box.memory_gb` | Numbers | No limit | Resource limits of the box |
-| `box.env` | Map of strings | Empty | Plain settings; names that look like secrets are refused |
-| `stacks.compose_files` | Paths in the worktree | Required | Passed to `docker compose --file`, in order |
-| `stacks.expose[]` | `service`, `port`, `subdomain` | `subdomain` = `service` | One route per entry; subdomains must be unique |
-| `credentials.claude.strategy` | `copy`, `login`, `skip` | `copy` | See the credential flow |
-| `credentials.claude.source.kind` | `auto`, `file`, `keychain`, `command`, `env` | `auto` | `auto`: the macOS keychain, else `~/.claude/.credentials.json` |
-| `credentials.github.strategy` | `copy`, `token`, `login`, `skip` | `copy` | See the credential flow |
-| `credentials.github.source` | As above | `auto`: `gh auth token` | Read by `copy` |
-| `credentials.github.token_env` | Env var name | `OUTPOST_GH_TOKEN` | Read by `token`: a fine-grained PAT |
-| `credentials.github.setup_git` | Boolean | `true` | Runs `gh auth setup-git` in the box |
-| `credentials.git.user_name`, `user_email` | Strings | Required | Commit identity in the box |
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | `main` | 1 to 30 lowercase letters, digits and `-`. Names the container `outpost-<name>` and its volumes |
+| `host` | `local` | `local`, or `ssh://user@host[:port]`; your ssh config applies |
+| `domain` | `dev.localhost` | Routes are `https://<route>.<domain>:<port>` |
+| `port` | `8443` | Port on `127.0.0.1` where the proxy answers, on the host and through the tunnel |
+| `devcontainer` | See below | devcontainer.json properties, merged over Outpost's defaults |
+| `init` | None | Scripts copied into the state volume and run in order, as root, at every start |
+| `credentials` | `[claude, gh]` | Logins checked and copied on every `up`; `[]` skips both |
+| `copy` | None | A path of yours to a container path, copied on every `up`; `~` in the target is `/home/dev` |
+| `persist` | None | More absolute container paths kept in volumes |
 
-## Secrets
+Paths on your machine are relative to the folder of `outpost.yaml`. The generated devcontainer.json goes to `.outpost/<name>/` in that folder; `./outpost config` prints it.
 
-- `outpost.yaml` never holds a secret, only where to read one on the client: a file, an environment variable name, the macOS keychain, or a command's output. The readers are built by [`build_secret_source`](../src/outpost/adapters/credentials/factory.py#L25-L44).
-- On the host, secrets live in three places, all mode 0600: the box home volume (Claude Code and gh logins), `<state_dir>/tls` (the local CA's key; the edge only mounts the `edge` subdirectory with the leaf certificate), and `<state_dir>/secrets/acme-dns` (one file per DNS credential, read by the edge through `<NAME>_FILE`, never through its environment). See [`parse_assignments`](../src/outpost/adapters/tls/acme.py#L53-L66).
-- Claude Code in the box must use the claude.ai login: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` would take precedence and hide claude.ai connectors. [`ClaudeAuth.state`](../src/outpost/adapters/credentials/claude.py#L33-L48) reads `authMethod` from `claude auth status` and reports anything but `claude.ai`.
+## The devcontainer settings
 
-## Credential flow
+The defaults are the default image and the Claude Code feature. Your settings are checked by [`DevContainerSettings.parse`](../src/outpost/domain/devcontainer.py#L86-L103) and merged by [`define`](../src/outpost/domain/devcontainer.py#L218-L240):
 
-`up` and `creds sync` run the same steps for Claude Code, then GitHub; see [`CredentialSync`](../src/outpost/application/credentials.py#L26-L103).
+- Your keys replace the defaults, except `features` and `containerEnv`, merged key by key; `null` removes a default entry.
+- `build` replaces `image`. Its `dockerfile` and `context` are relative to `outpost.yaml`, and the build argument `OUTPOST_BASE` names the default image, for `ARG OUTPOST_BASE` then `FROM ${OUTPOST_BASE}`.
+- Images must derive from `outpost/base`: the inner Docker, the proxy and the `outpost` tool come from it.
+- Features come from a registry; local features are refused.
 
-1. Check in the box with the tool itself. Valid means nothing to do.
-2. `copy`: read the client source; found means install it in the box, then check again.
-3. Nothing on the client: ask whether to log in on the box, or on this machine and then copy, or stop.
-4. `login`: open the tool's interactive login in the box.
-5. `token` (GitHub only): read the PAT from `token_env` and log `gh` in with it.
-6. Then `gh auth setup-git` when `setup_git` is true, and the git identity during `up`.
+## What Outpost sets and refuses
 
-Copying a Claude login gives the client and the box the same refresh token. If that logs one side out, switch to `strategy: login` (tracked in [ADR 0007](adr/0007-credentials-copy-first.md)).
+| Setting | Value | Why |
+| --- | --- | --- |
+| `workspaceMount`, `workspaceFolder` | A volume on `/workspaces` | No folder of your machine is mounted |
+| `mounts` | Outpost's volumes | Add volumes with `persist` |
+| `privileged` | `true` | The inner Docker needs it |
+| `overrideCommand` | `false` | The image's entrypoint runs at every start |
+| `remoteUser` | `dev` | Logins, copies and shells belong to this user |
+| `updateRemoteUserUID` | `false` | No bind mount to match |
+| `runArgs` | `--name`, `--restart unless-stopped`, `--publish 127.0.0.1:<port>:443`, `--label outpost.settings=<digest>` | Identity, reboot recovery, the only published port, recreation |
+| `containerEnv` `OUTPOST_*` | Name, domain, port | Read by the `outpost` tool |
+
+Setting one of these is an error naming the key, from [`OWNED_KEYS`](../src/outpost/domain/devcontainer.py#L43-L57). So are `-v`, `--volume`, `--mount`, `-p`, `--publish`, `--name` and `--restart` in `runArgs`, from [`REFUSED_RUN_ARGS`](../src/outpost/domain/devcontainer.py#L58-L68).
+
+## Logins
+
+- **claude**: valid when `claude auth status` reports the claude.ai login, read by [`ClaudeLogin.state`](../src/outpost/launcher/adapters/logins.py#L80-L94). Otherwise your login is copied from the macOS Keychain or `~/.claude/.credentials.json` (`$CLAUDE_CONFIG_DIR` is honoured). With neither, `up` offers `claude auth login` in the container.
+- **gh**: valid when `gh auth status` succeeds. Otherwise `gh auth token` from your machine is piped into `gh auth login --with-token`, then `gh auth setup-git` runs.
+- Secrets go through stdin into files with mode 0600. Copying shares one Claude refresh token between your machine and the container; if one side is logged out, log in inside the container instead ([ADR 0007](adr/0007-copy-logins-first.md)).

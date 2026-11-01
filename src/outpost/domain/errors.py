@@ -1,4 +1,4 @@
-"""Errors Outpost raises on purpose. Only the CLI turns them into messages and exit codes."""
+"""Errors Outpost raises on purpose. Only each side's `cli.main` turns them into exit codes."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ class OutpostError(Exception):
 
 
 class ConfigError(OutpostError):
-    """The configuration is invalid; `path` names the offending key."""
+    """The configuration is invalid; `path` names the key at fault."""
 
     def __init__(self, path: str, message: str) -> None:
         super().__init__(f"{path}: {message}" if path else message)
@@ -19,11 +19,11 @@ class ConfigError(OutpostError):
 
 
 class InvalidValue(OutpostError):
-    """A value breaks a domain rule: a name, a port, a reference."""
+    """A value breaks a domain rule: a name, a port, a path."""
 
 
 class CommandFailed(OutpostError):
-    """A command on the client, the host or the box exited with a non-zero code."""
+    """A command on your machine, on the host or in the container exited with an error."""
 
     def __init__(self, argv: Sequence[str], code: int, stderr: str) -> None:
         detail = stderr.strip().splitlines()[-1] if stderr.strip() else "no error output"
@@ -38,8 +38,4 @@ class Declined(OutpostError):
 
 
 class Unavailable(OutpostError):
-    """Something Outpost needs is missing: a tool, a secret, an image, a host."""
-
-
-class NotImplementedYet(OutpostError):
-    """A command that is designed but not built yet."""
+    """Something Outpost needs is missing or unreachable: a tool, the host, the proxy, a file."""

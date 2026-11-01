@@ -1,6 +1,7 @@
-# Local configuration: copy outpost.example.yaml to outpost.yaml
+# Local configuration and what Outpost generates next to it
 /outpost.yaml
 /outpost-ca.pem
+.outpost/
 
 # Python
 __pycache__/

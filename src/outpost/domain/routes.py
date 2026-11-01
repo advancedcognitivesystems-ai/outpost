@@ -1,83 +1,87 @@
-"""Routes: how a worktree's services become `https://<subdomain>--<worktree>.<domain>`."""
+"""Routes: a name under the domain, served over HTTPS by the proxy and sent to one upstream."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 
 from outpost.domain.errors import InvalidValue
-from outpost.domain.names import DNS_LABEL_MAX, Domain, Port, ServiceName, Subdomain, WorktreeName
+from outpost.domain.names import DnsName, port_number
 
-SEPARATOR = "--"
-HTTPS_DEFAULT_PORT = 443
-HTTP_DEFAULT_PORT = 80
+DEVCONTAINER = "devcontainer"
+"""The upstream host that stands for the dev container itself, as seen from the proxy."""
 
-
-@dataclass(frozen=True)
-class ExposedService:
-    """A compose service that gets a route, from `stacks.expose`."""
-
-    service: ServiceName
-    port: Port
-    subdomain: Subdomain
+HTTPS_PORT = 443
+_UPSTREAM_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
-@dataclass(frozen=True)
-class Route:
-    """One hostname mapped to one service port of one worktree's stack."""
+@dataclass(frozen=True, slots=True)
+class Upstream:
+    """Where the proxy sends a route: a container, a network alias, or `devcontainer`."""
 
-    worktree: WorktreeName
-    service: ServiceName
-    port: Port
-    hostname: str
+    host: str
+    port: int
+
+    def __post_init__(self) -> None:
+        if not _UPSTREAM_HOST.fullmatch(self.host):
+            raise InvalidValue(f"{self.host!r} is not a container name or network alias")
+        port_number(self.port)
+
+    @classmethod
+    def parse(cls, text: str) -> Upstream:
+        host, separator, port = text.rpartition(":")
+        if not separator or not port.isdigit():
+            raise InvalidValue(
+                f"{text!r} is not an upstream: use container:port or devcontainer:port"
+            )
+        return cls(host, int(port))
 
     @property
-    def key(self) -> str:
-        """Stable identifier, unique per worktree and subdomain."""
-        return self.hostname.split(".", 1)[0]
+    def is_devcontainer(self) -> bool:
+        return self.host == DEVCONTAINER
 
-    def url(self, *, secure: bool, port: int) -> str:
-        scheme, default = ("https", HTTPS_DEFAULT_PORT) if secure else ("http", HTTP_DEFAULT_PORT)
-        suffix = "" if port == default else f":{port}"
-        return f"{scheme}://{self.hostname}{suffix}"
+    def __str__(self) -> str:
+        return f"{self.host}:{self.port}"
 
 
-def plan_routes(
-    worktree: WorktreeName, services: Iterable[ExposedService], domain: Domain
-) -> tuple[Route, ...]:
-    """Every route of a worktree; refuses names that do not fit one DNS label."""
-    routes = []
-    for exposed in services:
-        label = f"{exposed.subdomain}{SEPARATOR}{worktree}"
-        if len(label) > DNS_LABEL_MAX:
-            raise InvalidValue(
-                f"route {label!r} is {len(label)} characters; a DNS label allows {DNS_LABEL_MAX}. "
-                "Use a shorter worktree name or subdomain."
-            )
-        routes.append(
-            Route(
-                worktree=worktree,
-                service=exposed.service,
-                port=exposed.port,
-                hostname=f"{label}.{domain}",
-            )
-        )
-    return tuple(routes)
+@dataclass(frozen=True, slots=True)
+class Route:
+    name: DnsName
+    upstream: Upstream
 
 
-STACK_PREFIX = "wt-"
+@dataclass(frozen=True, slots=True)
+class Site:
+    """Where routes are served: the domain their names live under, and the port browsers use."""
+
+    domain: DnsName
+    port: int
+
+    def __post_init__(self) -> None:
+        port_number(self.port)
+
+    def hostname(self, name: DnsName) -> DnsName:
+        return name.under(self.domain)
+
+    def url(self, name: DnsName) -> str:
+        return f"https://{self.hostname(name)}{self._port_suffix}"
+
+    def url_pattern(self) -> str:
+        return f"https://<route>.{self.domain}{self._port_suffix}"
+
+    @property
+    def _port_suffix(self) -> str:
+        return "" if self.port == HTTPS_PORT else f":{self.port}"
+
+    def name_of(self, hostname: str) -> DnsName | None:
+        """The route name a hostname stands for, or None when it is not under the domain."""
+        try:
+            return DnsName(hostname).relative_to(self.domain)
+        except InvalidValue:
+            return None
 
 
-def stack_project(worktree: WorktreeName) -> str:
-    """Name of a worktree's stack on the inner engine."""
-    return f"{STACK_PREFIX}{worktree}"
-
-
-def worktree_of_stack(project: str) -> WorktreeName | None:
-    """The worktree a stack belongs to, or None for a stack Outpost did not start."""
-    if not project.startswith(STACK_PREFIX):
-        return None
-    try:
-        return WorktreeName(project.removeprefix(STACK_PREFIX))
-    except InvalidValue:
-        return None
+def matches(name: DnsName, pattern: str) -> bool:
+    """Whether a route name matches a pattern such as `api.feat-a` or `*.feat-a`."""
+    return fnmatchcase(name.value, pattern)

@@ -1,88 +1,74 @@
 # Architecture
 
-Every request takes the same path on WSL and on Azure: browser, edge, router, stack service. Per target, only two things change: how the client reaches the host, and where the edge's certificate comes from.
+Your machine drives the host's Docker; everything else runs inside one dev container, and a browser reaches it only through the proxy's port on `127.0.0.1`.
 
-## Runtime topology
-
-```mermaid
-flowchart TB
-  subgraph client[Your machine]
-    browser[Browser]
-    editor[VS Code or shell]
-    cli[./outpost]
-  end
-  subgraph host[Host: WSL2 distro or Azure VM]
-    edge[Edge: Traefik, TLS for *.domain]
-    engine[Host Docker engine]
-    subgraph box[Box: dev container]
-      router[Router: Traefik, Docker labels]
-      agents[Agents in tmux]
-      inner[Inner Docker engine]
-      stackA[Stack wt-feat-a]
-      stackB[Stack wt-feat-b]
-    end
-    volumes[(workspaces, docker, home, exchange)]
-  end
-  browser -- HTTPS 443 --> edge
-  edge -- HTTP, Host kept --> router
-  router --> stackA
-  router --> stackB
-  editor -- SSH, docker exec --> agents
-  cli -- SSH or local --> engine
-  engine --> edge
-  engine --> box
-  volumes -.mounted.-> box
+```text
+your machine                         host (local Docker, or a Linux VM over SSH)
++--------------------+               +-------------------------------------------------+
+| ./outpost          | Docker API -> | dev container  outpost-<name>   (privileged)    |
+|                    | (over SSH)    |   claude, gh, git, outpost tool                 |
+| browser            | HTTPS ------> |   inner Docker, network `outpost`               |
+|  *.dev.localhost   | :8443         |     outpost-proxy (Caddy)  -> stack containers  |
+|                    | (tunnel if    |                                                 |
+| ./outpost tunnel   |  remote)      | named volumes: home, workspaces, docker, state   |
++--------------------+               +-------------------------------------------------+
 ```
 
-- The edge holds the only certificate and forwards every hostname under the domain to the router: one catch-all rule, written by [`edge_dynamic_config`](../src/outpost/adapters/proxy/traefik.py#L109-L139).
-- The router runs on the box's inner engine and finds stacks from their labels. `outpost up` starts it once the inner engine answers, with [`InnerRouter`](../src/outpost/application/environment.py#L35-L56) and the container from [`TraefikRouter.container`](../src/outpost/adapters/proxy/traefik.py#L160-L173); its restart policy brings it back with the box.
-- The CLI never talks to the box directly: it drives the host's engine and runs box commands through `docker exec`.
+## What `./outpost up` does
 
-## New stacks go live without a reload
+[`Up.run`](../src/outpost/launcher/application/up.py#L63-L83), in order:
 
-1. `outpost stack up <worktree>` writes a small compose override for that worktree: router labels for each exposed service and the `outpost-routes` network next to the networks the service already declares. See [`compose_override`](../src/outpost/adapters/stacks/compose.py#L85-L108). Services keep their own restart policies.
-2. The router's Docker provider sees the containers start and adds their routes.
-3. The edge already forwards `*.<domain>`, and its wildcard certificate already covers the new name.
+1. Checks the host's Docker answers. A remote host is reached with `DOCKER_HOST=ssh://...`, set once in [`Launcher`](../src/outpost/launcher/cli/wiring.py#L51-L146).
+2. Builds the default image on the host when missing. Its tag is a digest of its sources, computed by [`CheckoutBaseImage`](../src/outpost/launcher/adapters/base_image.py#L17-L52).
+3. Streams a custom image that only exists on your machine to a remote host, with `docker save | docker load`.
+4. Creates the named volumes, labelled with the environment's name.
+5. Compares the settings digest on the existing container with the new one, and asks before recreating.
+6. Runs `devcontainer up` with the file [`define`](../src/outpost/domain/devcontainer.py#L218-L240) builds, through [`DevContainerCliAdapter`](../src/outpost/launcher/adapters/devcontainer_cli.py#L17-L56).
+7. Waits until the container's boot record says ready.
+8. Checks and copies the logins, with [`Logins`](../src/outpost/launcher/application/logins.py#L12-L53).
+9. Copies the `copy` entries, replaces the init scripts, and runs them if they changed.
 
-`stack up` also writes a starter script with the exact `up` command, and the box runs every starter when it starts, through [`ComposeStacks.boot_script`](../src/outpost/adapters/stacks/compose.py#L77-L82). After a reboot the same stacks come back, one-shot jobs such as migrations included, without forcing a restart policy on any service. `stack down` removes the starter.
+## Inside the container, at every start
 
-No host port is allocated per stack: every stack keeps its internal ports, and hostnames tell them apart. Route names are flat, `<service>--<worktree>.<domain>`, because a wildcard certificate covers one label; see [`plan_routes`](../src/outpost/domain/routes.py#L45-L65).
+The image's entrypoint, `image/entrypoint.sh`, runs whoever starts the container: `./outpost up`, `docker start`, or Docker after a reboot through `--restart unless-stopped`.
 
-## Same implementation on WSL and Azure
+1. It clears the last boot record, prepares cgroup v2 nesting, and starts the inner Docker engine.
+2. `outpost boot` runs [`Boot.run`](../src/outpost/container/application/boot.py#L41-L58): the `outpost` network and the proxy through [`CaddyContainer`](../src/outpost/container/adapters/proxy_container.py#L28-L109), then the init scripts, then the record says ready.
+3. The container lives as long as the inner engine.
 
-| Concern | WSL (local VM) | Azure VM |
+## Proxy and certificates
+
+- Caddy runs on the inner Docker as `outpost-proxy`, on the `outpost` network, listening on 443, with the base config `image/caddy.json`.
+- Its admin API is published on the dev container's `127.0.0.1:2019` only; [`CaddyAdmin`](../src/outpost/container/adapters/caddy.py#L83-L155) adds and removes routes by `@id`.
+- Caddy saves every API change and restores it at start (`--resume`). When the base config or the proxy's arguments change, the proxy is recreated and its routes are carried over.
+- Caddy's internal CA issues a certificate per route name. Its root key stays in the state volume.
+- `devcontainer` is a host alias of the proxy pointing at the dev container itself, for processes run outside the inner Docker.
+
+## What persists
+
+| Path | Volume | Holds |
 | --- | --- | --- |
-| Client to host | `connection.kind: local`, Outpost runs in the distro | `connection.kind: ssh` |
-| Domain | `dev.localhost`; Chromium and Firefox resolve `*.localhost` to loopback | Your domain with a wildcard DNS record |
-| Edge listens on | `127.0.0.1`, reached from Windows by WSL localhost forwarding | The VPN interface, or `0.0.0.0` behind an NSG allowlist |
-| Certificate | `local-ca`, trusted once with `outpost tls trust` | `acme`, Let's Encrypt wildcard through DNS-01 |
-| Isolation | `privileged` | `sysbox` |
+| `/home/dev` | `outpost-<name>-home` | Claude Code login and sessions, gh login, shell history, caches |
+| `/workspaces` | `outpost-<name>-workspaces` | Repositories, worktrees, scratch |
+| `/var/lib/docker` | `outpost-<name>-docker` | Inner images, stacks, their volumes |
+| `/var/lib/outpost` | `outpost-<name>-state` | Proxy CA, certificates and routes; init scripts; the boot record |
+| Each `persist` path | `outpost-<name>-persist-<path>` | What you list |
 
-## Persistence
+The volumes are built in [`volumes_for`](../src/outpost/domain/volumes.py#L50-L65). A restart keeps the whole disk; a recreation keeps the volumes; `destroy` removes both.
 
-| What | Volume or path | Mounted at |
-| --- | --- | --- |
-| Clone, worktrees, build outputs | `outpost-<project>-workspaces` | `/workspaces` |
-| Inner images, containers, stack volumes | `outpost-<project>-docker` | `/var/lib/docker` |
-| `~/.claude`, `~/.config/gh`, NuGet cache | `outpost-<project>-home` | `/home/<user>` |
-| Files shared with your machine | `<state_dir>/exchange` on the host | `/exchange` |
-| Edge certificates, ACME account | `outpost-<project>-edge-data` | `/data` in the edge |
+## Moving files
 
-The box image adds Outpost's layer to the base image; the init script in `src/outpost/resources/box/` prepares cgroups for the inner engine, starts it, then runs the starters. The box container is built by [`box_container`](../src/outpost/application/box.py#L55-L73). Containers are recreated only when their spec changes, by [`converge`](../src/outpost/application/containers.py#L21-L42); volumes always survive.
+`./outpost cp` streams a tar archive through `docker exec`, as `dev`, in both directions, with nothing staged on the host: [`DockerCli.copy_in`](../src/outpost/launcher/adapters/docker_cli.py#L114-L123) and [`DockerCli.copy_out`](../src/outpost/launcher/adapters/docker_cli.py#L125-L142). Archives coming out are extracted with Python's `data` filter, which refuses absolute paths and links leaving the target.
 
-## Code layers
+## Code
 
-```mermaid
-flowchart TB
-  cli[cli: parsing, rendering, exit codes] --> application[application: use cases]
-  application --> ports[ports: interfaces]
-  ports --> domain[domain: pure values and rules]
-  wiring[cli.wiring: composition root] --> adapters[adapters: one per kind]
-  adapters -. implement .-> ports
-  cli --> config[config: YAML to domain]
-  config --> domain
-```
+One package, two sides on one domain:
 
-- Arrows are imports, checked by the contracts in `pyproject.toml`.
-- The use cases are [`Environment`](../src/outpost/application/environment.py#L59-L154), [`Doctor`](../src/outpost/application/doctor.py#L40-L69), [`CredentialSync`](../src/outpost/application/credentials.py#L26-L103), [`Worktrees`](../src/outpost/application/worktrees.py#L20-L46), [`Stacks`](../src/outpost/application/stacks.py#L12-L46) and [`BoxSession`](../src/outpost/application/session.py#L13-L21).
-- The composition root is [`App`](../src/outpost/cli/wiring.py#L60-L205); it is the only module that names an adapter class.
+| Package | Holds |
+| --- | --- |
+| `outpost.domain` | Values and rules shared by both sides: names, host, routes, volumes, devcontainer generation, layout, status |
+| `outpost.launcher` | `./outpost`: `config`, `ports`, `application`, `adapters`, `cli` |
+| `outpost.container` | `outpost` inside: `ports`, `application`, `adapters`, `cli` |
+| `outpost.infra` | Running programs, for adapters of both sides |
+
+Seven import contracts, from [`tool.importlinter`](../pyproject.toml#L58-L60), keep the layers pointing down and the sides apart.

@@ -1,46 +1,30 @@
 # Outpost
 
-Outpost runs a full development environment on a remote Docker host and drives it from your machine with one script. The environment is one dev container (the *box*) with its own Docker engine, many git worktrees, and one live stack per worktree, each service reachable at `https://<service>--<worktree>.<domain>` with a valid certificate.
+Outpost runs one dev container, your single entry point, on your machine or on a remote Linux host, from one optional file and one command.
 
-The same implementation targets a local VM (WSL) or a remote VM (Azure, any SSH host); only `outpost.yaml` changes.
-
-## Quick start
-
-```sh
-cp outpost.example.yaml outpost.yaml   # or: ./outpost init
-./outpost config validate
-./outpost doctor
-./outpost up
-./outpost worktree add feat-a --branch feature/a
-./outpost stack up feat-a              # prints the stack's URLs
+```bash
+./outpost up        # build the default image if needed, start the container, copy your logins
+./outpost ca        # once: save the proxy's root certificate, then trust it
+./outpost shell     # then `claude`, `gh`, `docker compose up` ...
 ```
 
-The entry script needs bash and [uv](https://docs.astral.sh/uv/); uv installs Python 3.12 and the dependencies on first run.
+Inside, a stack registers its own HTTPS URL:
+
+```bash
+outpost route add api.feat-a feat-a-api-1:8080   # https://api.feat-a.dev.localhost:8443
+```
+
+## What you get
+
+- **One container is the entry point.** Claude Code with your claude.ai login and connectors, the GitHub CLI, an inner Docker for your stacks, and a proxy with its own certificate authority.
+- **Local or remote, same commands.** `host: ssh://dev@my-vm` runs it on a VM; the host only needs Docker and SSH.
+- **No mounts.** Files cross by copy: `./outpost cp ./spec.pdf :~/inbox/`, `./outpost cp :/workspaces/app/out ./out`.
+- **A restart changes nothing on disk.** What is not in the image is in a named volume; recreating the container keeps the volumes.
 
 ## Documentation
 
-| Topic | Where |
-| --- | --- |
-| How it works: topology, routing, persistence, isolation | [docs/architecture.md](docs/architecture.md) |
-| Every key of `outpost.yaml` | [docs/configuration.md](docs/configuration.md) |
-| Adding a connection, TLS source, image source or check | [docs/extending.md](docs/extending.md) |
-| Tests and fakes | [docs/testing.md](docs/testing.md) |
-| Why things are the way they are | [docs/adr/](docs/adr/) |
-| Working on Outpost | [CONTRIBUTING.md](CONTRIBUTING.md) |
-
-## Status
-
-Version 0.1.0 is a skeleton: the layers, the configuration and every port exist, and the adapters are written, but nothing has run against a real host yet.
-
-| Area | State |
-| --- | --- |
-| Configuration: loading, validation, targets | Built and tested |
-| Domain: names, routes, layouts, doctor results | Built and tested |
-| `doctor`, `up`, `down`, `status`, `shell` | Built, tested with fakes, not yet run on a host |
-| `worktree add / ls / rm`, `stack up / down / ls / urls / logs` | Built, tested with fakes, not yet run on a host |
-| `creds status / sync`: copy, token, login | Built, tested with fakes, not yet run on a host |
-| Edge and router (Traefik), local CA, ACME DNS-01 | Built; local CA generation tested with openssl |
-| Box image (`resources/box/Dockerfile.tmpl`) | Written, not yet built |
-| `--dry-run`, `destroy`, `stack forward`, `tls status` | Designed, not built: they exit with a clear message |
-
-The [changelog](CHANGELOG.md) tracks what changes from here.
+- [Setup](docs/setup.md): prerequisites, a local host, an Azure VM, trusting the certificate.
+- [Configuration](docs/configuration.md): `outpost.yaml`, the devcontainer settings, logins.
+- [Building on Outpost](docs/stacks.md): routes, upstreams, init scripts.
+- [Architecture](docs/architecture.md) and [decisions](docs/adr/).
+- [Contributing](CONTRIBUTING.md) and [testing](docs/testing.md).

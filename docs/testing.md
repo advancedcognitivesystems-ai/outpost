@@ -1,6 +1,6 @@
 # Testing
 
-Use cases are tested through in-memory fakes of their ports; adapters are tested on the commands and files they produce; the configuration is tested against `outpost.example.yaml` itself.
+Use cases are tested through in-memory fakes of their ports; adapters are tested on the commands they build or against local stand-ins; the image is tested for agreement with the code.
 
 ## Running the checks
 
@@ -9,32 +9,31 @@ Use cases are tested through in-memory fakes of their ports; adapters are tested
 | Everything CI runs | `uv run pre-commit run --all-files` |
 | Tests | `uv run pytest` |
 | Strict types | `uv run mypy` |
-| Layer contracts | `uv run lint-imports` |
+| Import contracts | `uv run lint-imports` |
 | Format and lint | `uv run ruff format` then `uv run ruff check` |
 | Refresh line links in the docs | `uv run python -m tools.line_refs` |
-
-Install the hooks once with `uv run pre-commit install`, so they run on every commit.
 
 ## Layout
 
 | Folder | Covers | Style |
 | --- | --- | --- |
-| `tests/domain` | Names, routes, layouts | Plain values |
-| `tests/config` | The loader, on the example file and on targeted breakages | Each error asserts the key path it names |
-| `tests/adapters` | Shells, Docker arguments, Traefik settings, compose override, local CA, templates, sources | Fake shell answers; real `openssl` and local files where safe |
-| `tests/application` | Doctor, credentials, converge, `up`, worktrees, stacks | Fakes only |
-| `tests/cli` | Exit codes, usage errors, `init` | Through [`main`](../src/outpost/cli/main.py#L116-L128) |
+| `tests/domain` | Names, hosts, routes, volumes, copies, status, devcontainer generation | Plain values; every refusal names its key |
+| `tests/launcher` | Configuration, `up`, logins, copies, lifecycle, access, doctor, adapters, CLI | Fakes for use cases; `FakeRunner` and real files for adapters |
+| `tests/container` | Routes, boot, init, status, the Caddy client, the proxy's container, scripts, CLI | Fakes; a local stand-in of Caddy's API |
+| `tests/image` | `image/` agrees with the layout, the Caddy adapter and the digest | Reads the files |
 | `tests/test_doc_references.py` | Every code link in the docs | Fails on a stale line range |
 
 ## Fakes
 
-`tests/fakes.py` holds one fake per port. [`FakeShell`](../tests/fakes.py#L29-L96) answers by the longest matching argument prefix and records every call, stdin and written file; [`FakeEngine`](../tests/fakes.py#L100-L184) keeps containers, images and an event log, so tests can assert order, as in [`test_up_builds_then_runs_edge_box_router_then_clones`](../tests/application/test_doctor_and_environment.py#L172-L189).
+`tests/fakes.py` holds one fake per port and a [`FakeRunner`](../tests/fakes.py#L47-L113) answering by the longest matching argument prefix. Launcher fakes share an event log, so a test can assert the order of effects, as in [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](../tests/launcher/test_up.py#L64-L88).
 
 ## Not covered yet
 
-Nothing here talks to a real Docker engine, SSH host or registry. Before calling v0.1 done on a host, run this by hand on WSL and on an Azure VM:
+No test talks to a real Docker engine, SSH host, registry or Caddy. Before calling a version done, run this by hand on a local host and on a remote VM:
 
-1. `outpost doctor`, then `outpost up` from an empty host, then `outpost up` again (nothing changes).
-2. `outpost worktree add`, `outpost stack up`, then open each URL from the client's browser.
-3. Restart the host; the edge, the box, the router and the stacks come back on their own.
-4. `outpost creds sync` with each strategy, on a client with and without existing logins.
+1. `./outpost doctor`, then `./outpost up` from nothing, then `./outpost up` again: nothing changes.
+2. `./outpost shell`; `claude` is logged in with the claude.ai login and lists your claude.ai connectors; `gh auth status` succeeds.
+3. In the container, `docker run -d --name hello traefik/whoami`, then `outpost route add hello hello:80`; open the URL from your browser, after `./outpost ca` and, remotely, `./outpost tunnel`.
+4. `./outpost cp` in and out, with a file and a folder.
+5. Restart the host: the container, the proxy, the route and the stack come back on their own.
+6. Change `devcontainer` in `outpost.yaml`, run `./outpost up`, accept the recreation: logins, routes and `/workspaces` are still there.

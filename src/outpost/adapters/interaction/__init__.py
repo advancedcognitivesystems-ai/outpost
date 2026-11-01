@@ -1,1 +1,0 @@
-"""`Prompter` and `TemplateRenderer` adapters."""

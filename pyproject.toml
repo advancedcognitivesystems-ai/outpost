@@ -1,13 +1,14 @@
 [project]
 name = "outpost"
-version = "0.1.0"
-description = "Remote development environments: one dev container with Docker inside, many worktrees, one HTTPS route per service."
+version = "0.2.0"
+description = "A dev container framework: one container as the entry point, locally or on a remote host, with Docker inside, an HTTPS proxy and copied logins."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["pyyaml>=6.0.2"]
 
 [project.scripts]
-outpost = "outpost.cli.main:main"
+outpost = "outpost.launcher.cli.main:main"
+outpost-container = "outpost.container.cli.main:main"
 
 [dependency-groups]
 dev = [
@@ -59,38 +60,72 @@ root_package = "outpost"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers point down: cli, application, ports, domain"
+name = "On each side, layers point down: cli, application, ports"
 type = "layers"
-layers = ["outpost.cli", "outpost.application", "outpost.ports", "outpost.domain"]
+containers = ["outpost.launcher", "outpost.container"]
+layers = ["cli", "application", "ports"]
 
 [[tool.importlinter.contracts]]
-name = "Domain is pure"
+name = "The domain is pure and shared"
 type = "forbidden"
 source_modules = ["outpost.domain"]
-forbidden_modules = ["outpost.adapters", "outpost.config", "yaml"]
+forbidden_modules = ["outpost.launcher", "outpost.container", "outpost.infra", "yaml"]
 
 [[tool.importlinter.contracts]]
-name = "Application and ports never see adapters or config parsing"
+name = "The two sides never import each other"
+type = "independence"
+modules = ["outpost.launcher", "outpost.container"]
+
+[[tool.importlinter.contracts]]
+name = "Use cases and ports never see adapters, config parsing or processes"
 type = "forbidden"
-source_modules = ["outpost.application", "outpost.ports"]
-forbidden_modules = ["outpost.adapters", "outpost.config", "yaml"]
+source_modules = [
+  "outpost.launcher.application",
+  "outpost.launcher.ports",
+  "outpost.container.application",
+  "outpost.container.ports",
+]
+forbidden_modules = [
+  "outpost.launcher.adapters",
+  "outpost.launcher.config",
+  "outpost.container.adapters",
+  "outpost.infra",
+  "yaml",
+]
 
 [[tool.importlinter.contracts]]
 name = "Adapters implement ports and never call use cases"
 type = "forbidden"
-source_modules = ["outpost.adapters"]
-forbidden_modules = ["outpost.application", "outpost.cli", "outpost.config"]
+source_modules = ["outpost.launcher.adapters", "outpost.container.adapters"]
+forbidden_modules = [
+  "outpost.launcher.application",
+  "outpost.launcher.cli",
+  "outpost.launcher.config",
+  "outpost.container.application",
+  "outpost.container.cli",
+]
 
 [[tool.importlinter.contracts]]
 name = "Config parsing builds domain values only"
 type = "forbidden"
-source_modules = ["outpost.config"]
-forbidden_modules = ["outpost.application", "outpost.adapters", "outpost.cli", "outpost.ports"]
+source_modules = ["outpost.launcher.config"]
+forbidden_modules = [
+  "outpost.launcher.application",
+  "outpost.launcher.adapters",
+  "outpost.launcher.cli",
+  "outpost.launcher.ports",
+  "outpost.infra",
+]
 
 [[tool.importlinter.contracts]]
 name = "Only cli.wiring chooses adapters"
 type = "forbidden"
-source_modules = ["outpost.cli"]
-forbidden_modules = ["outpost.adapters"]
-ignore_imports = ["outpost.cli.wiring -> outpost.adapters.**"]
+source_modules = ["outpost.launcher.cli", "outpost.container.cli"]
+forbidden_modules = ["outpost.launcher.adapters", "outpost.container.adapters", "outpost.infra"]
+ignore_imports = [
+  "outpost.launcher.cli.wiring -> outpost.launcher.adapters.**",
+  "outpost.launcher.cli.wiring -> outpost.infra.**",
+  "outpost.container.cli.wiring -> outpost.container.adapters.**",
+  "outpost.container.cli.wiring -> outpost.infra.**",
+]
 allow_indirect_imports = true

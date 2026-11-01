@@ -1,4 +1,4 @@
-"""Credential vocabulary: which tools, which strategies, what state."""
+"""The logins Outpost carries into the container."""
 
 from __future__ import annotations
 
@@ -8,20 +8,13 @@ from enum import StrEnum
 
 class Tool(StrEnum):
     CLAUDE = "claude"
-    GITHUB = "github"
-
-
-class Strategy(StrEnum):
-    """How a missing credential is put in place in the box."""
-
-    COPY = "copy"
-    TOKEN = "token"
-    LOGIN = "login"
-    SKIP = "skip"
+    GITHUB = "gh"
 
 
 @dataclass(frozen=True)
-class AuthState:
+class LoginState:
     tool: Tool
     valid: bool
     detail: str = ""
+    installed: bool = True
+    """False when the tool is missing from the container: nothing to copy into, no login."""

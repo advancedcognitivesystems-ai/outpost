@@ -1,0 +1,29 @@
+{
+  "admin": {
+    "listen": "0.0.0.0:2019",
+    "origins": ["127.0.0.1:2019", "localhost:2019"],
+    "config": { "persist": true }
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "outpost": {
+          "listen": [":443"],
+          "protocols": ["h1", "h2"],
+          "routes": [],
+          "automatic_https": { "disable_redirects": true }
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [{ "issuers": [{ "module": "internal", "ca": "local" }] }]
+      }
+    },
+    "pki": {
+      "certificate_authorities": {
+        "local": { "name": "Outpost Local CA", "install_trust": false }
+      }
+    }
+  }
+}

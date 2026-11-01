@@ -1,360 +1,451 @@
-"""In-memory implementations of the ports, one per port, shared by every test."""
+"""One in-memory fake per port, plus a fake `Runner` for adapters. Fakes log to a shared list,
+so tests can assert the order of effects."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+import io
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import PurePath, PurePosixPath
+from typing import IO
 
-from outpost.domain.config import GitIdentity, Isolation
-from outpost.domain.credentials import AuthState, Tool
-from outpost.domain.names import ImageRef, ServiceName, WorktreeName
-from outpost.domain.resources import HostLayout
+from outpost.domain.commands import CommandResult
+from outpost.domain.credentials import LoginState, Tool
+from outpost.domain.devcontainer import DevContainerDefinition
+from outpost.domain.errors import Unavailable
+from outpost.domain.host import SshHost
+from outpost.domain.init import Script
+from outpost.domain.names import DnsName, ImageRef
 from outpost.domain.routes import Route
 from outpost.domain.secrets import Secret
-from outpost.domain.tls import Plaintext, TlsMaterial
-from outpost.domain.worktrees import Worktree
-from outpost.ports.engine import ContainerSpec, ContainerState
-from outpost.ports.shell import CommandResult
-from outpost.ports.stacks import StackDefinition
+from outpost.domain.status import BootRecord, ContainerStatus
+from outpost.domain.volumes import Volume
+from outpost.launcher.ports.docker import ContainerInfo, ContainerState, DockerHost
+
+type Events = list[str]
+
+
+def ok(stdout: str = "", argv: Sequence[str] = ()) -> CommandResult:
+    return CommandResult(tuple(argv), 0, stdout, "")
+
+
+def failed(code: int = 1, stderr: str = "failed", argv: Sequence[str] = ()) -> CommandResult:
+    return CommandResult(tuple(argv), code, "", stderr)
+
+
+# ------------------------------------------------------------------ processes
 
 
 @dataclass
-class _Response:
-    prefix: tuple[str, ...]
-    result: tuple[int, str, str]
+class Call:
+    argv: tuple[str, ...]
+    env: Mapping[str, str] | None
+    stdin: str | None = None
+    fed: bytes = b""
 
 
-class FakeShell:
-    """Answers commands by longest matching argv prefix; records everything it is asked."""
+class FakeRunner:
+    """Answers by the longest matching argument prefix; unknown commands succeed silently."""
 
-    def __init__(self, description: str = "fake", client_commands: tuple[str, ...] = ()) -> None:
-        self.description = description
-        self.client_commands = client_commands
-        self.calls: list[tuple[str, ...]] = []
-        self.stdins: list[str | None] = []
-        self.interactive: list[tuple[str, ...]] = []
-        self.interactive_code = 0
-        self.files: dict[PurePosixPath, str] = {}
-        self.modes: dict[PurePosixPath, int] = {}
-        self.directories: set[PurePosixPath] = set()
-        self._responses: list[_Response] = []
+    def __init__(self) -> None:
+        self.calls: list[Call] = []
+        self._answers: dict[tuple[str, ...], CommandResult] = {}
+        self.attached_codes: dict[tuple[str, ...], int] = {}
+        self.drained: bytes = b""
 
-    def respond(self, *prefix: str, code: int = 0, stdout: str = "", stderr: str = "") -> None:
-        self._responses.append(_Response(tuple(prefix), (code, stdout, stderr)))
+    def answer(self, prefix: Sequence[str], result: CommandResult) -> None:
+        self._answers[tuple(prefix)] = result
 
-    def _answer(self, argv: tuple[str, ...]) -> tuple[int, str, str]:
-        matches = [item for item in self._responses if argv[: len(item.prefix)] == item.prefix]
+    def argvs(self) -> list[tuple[str, ...]]:
+        return [call.argv for call in self.calls]
+
+    def _result(self, argv: Sequence[str]) -> CommandResult:
+        matches = [prefix for prefix in self._answers if tuple(argv[: len(prefix)]) == prefix]
         if not matches:
-            return (0, "", "")
-        return max(matches, key=lambda item: len(item.prefix)).result
+            return CommandResult(tuple(argv), 0)
+        found = self._answers[max(matches, key=len)]
+        return CommandResult(tuple(argv), found.code, found.stdout, found.stderr)
 
     def run(
+        self, argv: Sequence[str], *, env: Mapping[str, str] | None = None, stdin: str | None = None
+    ) -> CommandResult:
+        self.calls.append(Call(tuple(argv), env, stdin))
+        return self._result(argv)
+
+    def attached(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> int:
+        self.calls.append(Call(tuple(argv), env))
+        matches = [p for p in self.attached_codes if tuple(argv[: len(p)]) == p]
+        return self.attached_codes[max(matches, key=len)] if matches else 0
+
+    def feed(
         self,
         argv: Sequence[str],
+        write: Callable[[IO[bytes]], None],
         *,
-        stdin: str | None = None,
-        cwd: PurePosixPath | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult:
-        call = tuple(argv)
-        self.calls.append(call)
-        self.stdins.append(stdin)
-        code, stdout, stderr = self._answer(call)
-        return CommandResult(call, code, stdout, stderr)
+        buffer = io.BytesIO()
+        write(buffer)
+        self.calls.append(Call(tuple(argv), env, fed=buffer.getvalue()))
+        return self._result(argv)
 
-    def run_interactive(self, argv: Sequence[str], *, cwd: PurePosixPath | None = None) -> int:
-        self.interactive.append(tuple(argv))
-        return self.interactive_code
+    def drain(
+        self,
+        argv: Sequence[str],
+        read: Callable[[IO[bytes]], None],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> CommandResult:
+        self.calls.append(Call(tuple(argv), env))
+        read(io.BytesIO(self.drained))
+        return self._result(argv)
 
-    def ensure_directory(self, path: PurePosixPath) -> None:
-        self.directories.add(path)
-
-    def write_file(self, path: PurePosixPath, content: str, *, mode: int = 0o644) -> None:
-        self.files[path] = content
-        self.modes[path] = mode
-
-    def read_file(self, path: PurePosixPath) -> str | None:
-        return self.files.get(path)
-
-    def remove_file(self, path: PurePosixPath) -> None:
-        self.files.pop(path, None)
-
-    def upload(self, source: Path, target: PurePosixPath) -> None:
-        self.files[target] = source.read_text(encoding="utf-8")
-
-    @contextmanager
-    def staged(self, source: Path) -> Iterator[PurePosixPath]:
-        target = PurePosixPath("/tmp/staged") / source.name
-        self.upload(source, target)
-        try:
-            yield target
-        finally:
-            self.remove_file(target)
-
-    def ran(self, *prefix: str) -> bool:
-        return any(call[: len(prefix)] == prefix for call in self.calls)
+    def pipe(
+        self,
+        producer: Sequence[str],
+        consumer: Sequence[str],
+        *,
+        env: Mapping[str, str] | None,
+        consumer_env: Mapping[str, str] | None,
+    ) -> CommandResult:
+        self.calls.append(Call(tuple(producer), env))
+        self.calls.append(Call(tuple(consumer), consumer_env))
+        return self._result(consumer)
 
 
-@dataclass
-class FakeEngine:
-    containers: dict[str, ContainerSpec] = field(default_factory=dict)
-    running: set[str] = field(default_factory=set)
-    images: set[str] = field(default_factory=set)
-    networks: set[str] = field(default_factory=set)
-    volumes: set[str] = field(default_factory=set)
-    events: list[str] = field(default_factory=list)
-    reachable: bool = True
+# ------------------------------------------------------------------ launcher ports
 
-    def version(self) -> str | None:
-        return "27.0.0" if self.reachable else None
 
-    def supports(self, isolation: Isolation) -> bool:
-        return isolation is Isolation.PRIVILEGED
+class FakeDocker:
+    def __init__(self, events: Events, *, description: str = "local", reachable: bool = True):
+        self.events = events
+        self._description = description
+        self.reachable = reachable
+        self.containers: dict[str, ContainerInfo] = {}
+        self.images: set[str] = set()
+        self.volume_labels: dict[str, dict[str, str]] = {}
+        self.exec_answers: dict[tuple[str, ...], CommandResult] = {("test", "-d"): failed()}
+        self.exec_calls: list[tuple[tuple[str, ...], str, str | None]] = []
+        self.copies: list[tuple[str, str, str, str, str]] = []
+        self.attached_code = 0
 
-    def image_exists(self, ref: ImageRef) -> bool:
-        return str(ref) in self.images
+    @property
+    def description(self) -> str:
+        return self._description
 
-    def pull(self, ref: ImageRef) -> None:
-        self.events.append(f"pull {ref}")
-        self.images.add(str(ref))
+    def server_version(self) -> str:
+        self.events.append("docker.version")
+        if not self.reachable:
+            raise Unavailable(f"Docker on {self._description} does not answer")
+        return "28.0.0"
 
-    def build(self, context: PurePosixPath, tag: ImageRef) -> None:
-        self.events.append(f"build {tag}")
-        self.images.add(str(tag))
+    def container(self, name: str) -> ContainerInfo:
+        return self.containers.get(name, ContainerInfo(ContainerState.MISSING))
 
-    def save(self, ref: ImageRef, archive: Path) -> None:
-        archive.write_text(str(ref), encoding="utf-8")
+    def image_exists(self, image: ImageRef) -> bool:
+        return image.value in self.images
 
-    def load(self, archive: PurePosixPath) -> None:
-        self.events.append(f"load {archive}")
+    def build_image(self, image: ImageRef, context: PurePath, dockerfile: PurePath) -> None:
+        self.events.append(f"build {image}")
+        self.images.add(image.value)
 
-    def login(self, registry: str, username: str, password: Secret) -> None:
-        self.events.append(f"login {registry} {username}")
+    def load_image(self, image: ImageRef, source: DockerHost) -> None:
+        self.events.append(f"load {image} from {source.description}")
+        self.images.add(image.value)
 
-    def ensure_network(self, name: str) -> None:
-        self.networks.add(name)
+    def ensure_volume(self, volume: Volume, labels: Mapping[str, str]) -> None:
+        self.events.append(f"volume {volume.name}")
+        self.volume_labels.setdefault(volume.name, dict(labels))
 
-    def ensure_volume(self, name: str) -> None:
-        self.volumes.add(name)
+    def volumes(self, labels: Mapping[str, str]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                name
+                for name, own in self.volume_labels.items()
+                if all(own.get(key) == value for key, value in labels.items())
+            )
+        )
 
-    def state(self, container: str) -> ContainerState:
-        if container not in self.containers:
-            return ContainerState.MISSING
-        return ContainerState.RUNNING if container in self.running else ContainerState.STOPPED
-
-    def label(self, container: str, key: str) -> str | None:
-        spec = self.containers.get(container)
-        return spec.labels.get(key) if spec else None
-
-    def run(self, spec: ContainerSpec) -> None:
-        self.events.append(f"run {spec.name}")
-        self.containers[spec.name] = spec
-        self.running.add(spec.name)
-
-    def start(self, container: str) -> None:
-        self.events.append(f"start {container}")
-        self.running.add(container)
+    def remove_volumes(self, names: Sequence[str]) -> None:
+        self.events.append(f"rm volumes {' '.join(names)}")
+        for name in names:
+            self.volume_labels.pop(name, None)
 
     def stop(self, container: str) -> None:
         self.events.append(f"stop {container}")
-        self.running.discard(container)
+        self.containers[container] = ContainerInfo(ContainerState.STOPPED)
 
     def remove(self, container: str) -> None:
-        self.events.append(f"remove {container}")
+        self.events.append(f"rm {container}")
         self.containers.pop(container, None)
-        self.running.discard(container)
 
     def exec(
-        self,
-        container: str,
-        argv: Sequence[str],
-        *,
-        user: str | None = None,
-        stdin: str | None = None,
+        self, container: str, argv: Sequence[str], *, user: str, stdin: str | None = None
     ) -> CommandResult:
-        return CommandResult(tuple(argv), 0, "", "")
+        self.exec_calls.append((tuple(argv), user, stdin))
+        self.events.append(f"exec {' '.join(argv)}")
+        matches = [p for p in self.exec_answers if tuple(argv[: len(p)]) == p]
+        if not matches:
+            return CommandResult(tuple(argv), 0)
+        found = self.exec_answers[max(matches, key=len)]
+        return CommandResult(tuple(argv), found.code, found.stdout, found.stderr)
 
-    def exec_interactive(
-        self, container: str, argv: Sequence[str], *, user: str | None = None
+    def exec_attached(
+        self, container: str, argv: Sequence[str], *, user: str, workdir: PurePosixPath
     ) -> int:
+        self.events.append(f"attached {' '.join(argv)} as {user} in {workdir}")
+        return self.attached_code
+
+    def copy_in(
+        self, container: str, source: PurePath, directory: PurePosixPath, name: str, *, user: str
+    ) -> None:
+        self.events.append(f"copy in {source} -> {directory / name} as {user}")
+        self.copies.append(("in", str(source), str(directory), name, user))
+
+    def copy_out(
+        self, container: str, source: PurePosixPath, directory: PurePath, name: str, *, user: str
+    ) -> None:
+        self.events.append(f"copy out {source} -> {directory / name}")
+        self.copies.append(("out", str(source), str(directory), name, user))
+
+    def logs(self, container: str, *, follow: bool) -> int:
         return 0
 
-    def copy_into(self, container: str, source: PurePosixPath, target: PurePosixPath) -> None:
-        self.events.append(f"copy {source} {container}:{target}")
+
+class FakeDevContainer:
+    def __init__(self, events: Events, docker: FakeDocker, *, installed: bool = True) -> None:
+        self.events = events
+        self.docker = docker
+        self.installed = installed
+        self.definitions: list[DevContainerDefinition] = []
+        self.recreated: list[bool] = []
+
+    def version(self) -> str | None:
+        return "0.80.0" if self.installed else None
+
+    def up(
+        self,
+        definition: DevContainerDefinition,
+        workdir: PurePath,
+        id_label: str,
+        *,
+        recreate: bool,
+    ) -> None:
+        self.events.append(f"devcontainer up recreate={recreate}")
+        self.definitions.append(definition)
+        self.recreated.append(recreate)
+        name = str(definition.document["name"])
+        self.docker.containers[name] = ContainerInfo(
+            ContainerState.RUNNING, definition.settings_digest
+        )
 
 
-class FakePrompter:
-    def __init__(self, *, confirms: Sequence[bool] = (), choices: Sequence[int] = ()) -> None:
-        self.messages: list[str] = []
+class FakeRuntime:
+    def __init__(self, events: Events, status: ContainerStatus | None = None) -> None:
+        self.events = events
+        self.current = status or ContainerStatus(ready=True, proxy_running=True, routes=0)
+        self.certificate = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
+
+    def wait_ready(self, container: str, timeout: float) -> ContainerStatus:
+        self.events.append("wait ready")
+        return self.current
+
+    def status(self, container: str) -> ContainerStatus:
+        return self.current
+
+    def routes(self, container: str) -> str:
+        return "https://api.feat-a.dev.localhost:8443  ->  feat-a-api-1:8080\n"
+
+    def run_init(self, container: str) -> ContainerStatus:
+        self.events.append("run init")
+        return self.current
+
+    def root_certificate(self, container: str) -> str:
+        return self.certificate
+
+
+BASE = ImageRef("outpost/base:0123456789ab")
+CHECKOUT = PurePath("/outpost")
+
+
+@dataclass
+class FakeBaseImage:
+    ref: ImageRef = BASE
+    context: PurePath = CHECKOUT
+    dockerfile: PurePath = CHECKOUT / "image" / "Dockerfile"
+
+    def reference(self) -> ImageRef:
+        return self.ref
+
+
+class FakeConsole:
+    def __init__(
+        self, *, answers: Sequence[bool] = (), text: str = "", interactive: bool = True
+    ) -> None:
+        self.answers = list(answers)
+        self.text = text
+        self._interactive = interactive
         self.questions: list[str] = []
-        self._confirms = list(confirms)
-        self._choices = list(choices)
+        self.messages: list[str] = []
+        self.warnings: list[str] = []
+
+    @property
+    def interactive(self) -> bool:
+        return self._interactive
 
     def info(self, message: str) -> None:
         self.messages.append(message)
 
     def warn(self, message: str) -> None:
-        self.messages.append(f"warning: {message}")
+        self.warnings.append(message)
 
     def confirm(self, question: str, *, default: bool) -> bool:
         self.questions.append(question)
-        return self._confirms.pop(0) if self._confirms else default
+        return self.answers.pop(0) if self.answers else default
 
-    def choose(self, question: str, options: Sequence[str]) -> int:
+    def ask(self, question: str) -> str:
         self.questions.append(question)
-        return self._choices.pop(0) if self._choices else 0
+        return self.text
 
 
-class FakeSecretSource:
-    def __init__(
-        self,
-        value: str | None,
-        description: str = "fake source",
-        client_commands: tuple[str, ...] = (),
-    ) -> None:
-        self.value = value
-        self.description = description
-        self.client_commands = client_commands
+@dataclass
+class FakeSource:
+    secret: Secret | None = None
+    description: str = "a test source"
 
     def read(self) -> Secret | None:
-        return Secret(self.value) if self.value else None
+        return self.secret
 
 
-class FakeToolAuth:
-    """Valid once something installs a secret or logs in."""
+@dataclass
+class FakeLogin:
+    tool: Tool
+    states: list[LoginState]
+    events: Events = field(default_factory=list)
+    installed: list[Secret] = field(default_factory=list)
 
-    def __init__(self, tool: Tool, *, valid: bool = False, login_works: bool = True) -> None:
-        self.tool = tool
-        self.valid = valid
-        self.login_works = login_works
-        self.installed: list[Secret] = []
-        self.logins = 0
-        self.finished = 0
-
-    def state(self) -> AuthState:
-        return AuthState(self.tool, self.valid, "logged in" if self.valid else "not logged in")
+    def state(self) -> LoginState:
+        return self.states.pop(0) if len(self.states) > 1 else self.states[0]
 
     def install(self, secret: Secret) -> None:
+        self.events.append(f"install {self.tool}")
         self.installed.append(secret)
-        self.valid = True
 
     def login(self) -> None:
-        self.logins += 1
-        self.valid = self.login_works
+        self.events.append(f"login {self.tool}")
 
     def finish(self) -> None:
-        self.finished += 1
-
-
-class FakeProbe:
-    def __init__(
-        self, *, reachable: bool = True, free_gb: float | None = 500.0, commands: Sequence[str] = ()
-    ) -> None:
-        self._reachable = reachable
-        self._free = free_gb
-        self._commands = set(commands)
-        self.addresses: dict[str, tuple[str, ...]] = {}
-
-    def reachable(self) -> bool:
-        return self._reachable
-
-    def home(self) -> str:
-        return "/home/dev"
-
-    def has_command(self, name: str) -> bool:
-        return name in self._commands
-
-    def free_disk_gb(self, path: str) -> float | None:
-        return self._free
-
-    def resolve(self, hostname: str) -> tuple[str, ...]:
-        return self.addresses.get(hostname, ())
+        self.events.append(f"finish {self.tool}")
 
 
 @dataclass
-class FakeRepository:
-    cloned: bool = False
-    items: list[Worktree] = field(default_factory=list)
-    identity: GitIdentity | None = None
-    removed: list[WorktreeName] = field(default_factory=list)
+class FakeFiles:
+    existing: set[str] = field(default_factory=set)
+    directories: set[str] = field(default_factory=set)
 
-    def is_cloned(self) -> bool:
-        return self.cloned
+    def is_dir(self, path: PurePath) -> bool:
+        return str(path) in self.directories
 
-    def clone(self) -> None:
-        self.cloned = True
-
-    def add_worktree(self, name: WorktreeName, branch: str, start: str | None) -> Worktree:
-        created = Worktree(name, branch, PurePosixPath("/workspaces/acme/worktrees") / str(name))
-        self.items.append(created)
-        return created
-
-    def remove_worktree(self, name: WorktreeName, *, force: bool) -> None:
-        self.removed.append(name)
-        self.items = [item for item in self.items if item.name != name]
-
-    def worktrees(self) -> tuple[Worktree, ...]:
-        return tuple(self.items)
-
-    def set_identity(self, identity: GitIdentity) -> None:
-        self.identity = identity
+    def exists(self, path: PurePath) -> bool:
+        return str(path) in self.existing or str(path) in self.directories
 
 
 @dataclass
-class FakeStackRunner:
-    started: list[StackDefinition] = field(default_factory=list)
-    stopped: list[WorktreeName] = field(default_factory=list)
+class FakeTunnel:
+    forwarded: list[tuple[str, int]] = field(default_factory=list)
 
-    def up(self, stack: StackDefinition) -> None:
-        self.started.append(stack)
-
-    def down(self, worktree: WorktreeName) -> None:
-        self.stopped.append(worktree)
-
-    def running(self) -> tuple[WorktreeName, ...]:
-        names = [stack.worktree for stack in self.started]
-        return tuple(name for name in names if name not in self.stopped)
-
-    def follow_logs(self, worktree: WorktreeName, service: ServiceName | None) -> int:
+    def forward(self, host: SshHost, port: int) -> int:
+        self.forwarded.append((str(host), port))
         return 0
 
-    def boot_script(self) -> str:
-        return "start-stacks"
+
+@dataclass
+class FakePrograms:
+    versions: dict[str, str] = field(default_factory=dict)
+
+    def version(self, argv: Sequence[str]) -> str | None:
+        return self.versions.get(argv[0])
 
 
-class FakeRouter:
-    network = "routes"
-
-    def container(self) -> ContainerSpec:
-        return ContainerSpec(name="router", image=ImageRef("router:1"))
-
-    def labels(self, route: Route) -> Mapping[str, str]:
-        return {"route": route.hostname}
+# ------------------------------------------------------------------ container ports
 
 
-class FakeImages:
-    def __init__(self) -> None:
-        self.ensured: list[ImageRef] = []
-        self.client_commands: tuple[str, ...] = ()
+class FakeProxy:
+    def __init__(self, events: Events, *, running: bool = True) -> None:
+        self.events = events
+        self.is_running = running
+        self.table: dict[str, Route] = {}
+        self.fail_ready = False
 
-    def ensure(self, ref: ImageRef) -> None:
-        self.ensured.append(ref)
+    def running(self) -> bool:
+        return self.is_running
+
+    def wait_ready(self, timeout: float) -> None:
+        self.events.append("proxy ready")
+        if self.fail_ready:
+            raise Unavailable("the proxy's API did not answer")
+
+    def routes(self) -> tuple[Route, ...]:
+        return tuple(self.table.values())
+
+    def put(self, route: Route) -> None:
+        self.events.append(f"put {route.name} {route.upstream}")
+        self.table[route.name.value] = route
+
+    def remove(self, name: DnsName) -> None:
+        self.events.append(f"remove {name}")
+        del self.table[name.value]
+
+    def root_certificate(self) -> str:
+        return "PEM"
 
 
-class FakeTls:
-    def prepare(self, layout: HostLayout) -> TlsMaterial:
-        return Plaintext()
+@dataclass
+class FakeProxyRuntime:
+    events: Events
 
-    def client_trust_bundle(self, layout: HostLayout) -> str | None:
-        return None
-
-
-class FakeEdge:
-    def prepare(self, layout: HostLayout, material: TlsMaterial) -> ContainerSpec:
-        return ContainerSpec(name="outpost-acme-edge", image=ImageRef("edge:1"))
+    def ensure_running(self) -> None:
+        self.events.append("proxy running")
 
 
-class EchoTemplates:
-    def render(self, name: str, values: Mapping[str, str]) -> str:
-        return f"{name}:" + ",".join(f"{key}={value}" for key, value in sorted(values.items()))
+@dataclass
+class FakeEngine:
+    events: Events
+    containers: dict[str, list[str]] = field(default_factory=dict)
+
+    def is_container(self, name: str) -> bool:
+        return name in self.containers
+
+    def networks(self, container: str) -> tuple[str, ...]:
+        return tuple(self.containers[container])
+
+    def connect(self, network: str, container: str) -> None:
+        self.events.append(f"connect {container} to {network}")
+        self.containers[container].append(network)
+
+
+@dataclass
+class FakeScripts:
+    events: Events
+    scripts: list[Script] = field(default_factory=list)
+    codes: dict[str, int] = field(default_factory=dict)
+
+    def listing(self) -> tuple[Script, ...]:
+        return tuple(self.scripts)
+
+    def run(self, script: Script) -> int:
+        self.events.append(f"run {script.name}")
+        return self.codes.get(script.name, 0)
+
+
+@dataclass
+class FakeStore:
+    record: BootRecord = field(default_factory=lambda: BootRecord(ready=False))
+    writes: list[BootRecord] = field(default_factory=list)
+
+    def read(self) -> BootRecord:
+        return self.record
+
+    def write(self, record: BootRecord) -> None:
+        self.record = record
+        self.writes.append(record)

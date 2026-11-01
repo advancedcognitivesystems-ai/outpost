@@ -4,54 +4,55 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 
 ## Before you start
 
-- Read [docs/architecture.md](docs/architecture.md): the runtime topology and the four code layers.
-- The layering is enforced, not just described: the import contracts start at [`tool.importlinter`](pyproject.toml#L57-L59) and break the build when a layer imports the wrong way.
-- Decisions that shaped the code are recorded in [docs/adr/](docs/adr/). A change that reverses one adds a new ADR.
+- Read [docs/architecture.md](docs/architecture.md): what runs where, and the code's two sides on one domain.
+- The layering is enforced: the import contracts start at [`tool.importlinter`](pyproject.toml#L58-L60) and break the build when a module imports the wrong way.
+- Decisions that shaped the code are in [docs/adr/](docs/adr/). A change that reverses one adds a new ADR.
 
 ## Working setup
 
-- Python and the tools come from uv; the dependency list starts at [`dependency-groups`](pyproject.toml#L12-L20).
+- Python and the tools come from uv; the development tools are listed at [`dependency-groups`](pyproject.toml#L13-L21).
 - The checks are the hooks in [`repo: local`](.pre-commit-config.yaml#L14-L43): format, lint, strict types, import contracts, tests. CI runs exactly these hooks, see [`checks`](.github/workflows/ci.yml#L9-L17).
-- Commands, fakes and what the tests do not cover are in [docs/testing.md](docs/testing.md).
+- Commands, fakes and the manual checklist are in [docs/testing.md](docs/testing.md).
 
 ## Where a change goes
 
 | You want to | Start here | Then |
 | --- | --- | --- |
-| Add a configuration key | The value type, such as [`EdgeSpec`](src/outpost/domain/config.py#L74-L87) | Parse it in [`_edge`](src/outpost/config/loader.py#L178-L189) or its neighbour, add it to `outpost.example.yaml`, add its row to [docs/configuration.md](docs/configuration.md) |
-| Add a kind (connection, TLS, image source, registry login, secret source) | [docs/extending.md](docs/extending.md) | One adapter module, one line in its factory, such as [`build_tls`](src/outpost/adapters/tls/factory.py#L17-L25) |
-| Add a doctor check | The base class [`Check`](src/outpost/application/doctor.py#L13-L37); an example is [`FreeDisk`](src/outpost/application/checks.py#L78-L94) | Register it in [`standard_checks`](src/outpost/application/checks.py#L146-L169) |
-| Add a command | The parser in [`build_parser`](src/outpost/cli/main.py#L29-L113) | A handler in `src/outpost/cli/commands.py`, a use case in `src/outpost/application/`, its ports from [`App`](src/outpost/cli/wiring.py#L60-L205) |
-| Change what the box contains | `src/outpost/resources/box/Dockerfile.tmpl` | [`BoxImage`](src/outpost/application/box.py#L23-L52) rebuilds when the rendered file changes |
-| Change how routes are named | [`plan_routes`](src/outpost/domain/routes.py#L45-L65) | The labels in [`TraefikRouter`](src/outpost/adapters/proxy/traefik.py#L153-L184) and the edge rule in [`edge_dynamic_config`](src/outpost/adapters/proxy/traefik.py#L109-L139) |
-| Change the credential flow | [`CredentialSync`](src/outpost/application/credentials.py#L26-L103) | Tool specifics stay in [`ClaudeAuth`](src/outpost/adapters/credentials/claude.py#L24-L60) and [`GithubAuth`](src/outpost/adapters/credentials/github.py#L14-L42) |
-| Run a new program on the client | The adapter's `client_commands`, from [`ClientNeeds`](src/outpost/ports/shell.py#L39-L43) | `doctor` checks it through [`ClientTools`](src/outpost/application/checks.py#L19-L31) |
-| Add a port | A new module in `src/outpost/ports/` | A fake in `tests/fakes.py` next to [`FakeShell`](tests/fakes.py#L29-L96), and its adapter built in [`App`](src/outpost/cli/wiring.py#L60-L205) |
+| Add a key to `outpost.yaml` | The value it becomes, in [`Environment`](src/outpost/domain/environment.py#L30-L72) | Read it in [`parse`](src/outpost/launcher/config/loader.py#L47-L71), add it to `outpost.example.yaml` and to [docs/configuration.md](docs/configuration.md) |
+| Change what devcontainer.json Outpost writes | [`define`](src/outpost/domain/devcontainer.py#L218-L240) and the owned keys in [`OWNED_KEYS`](src/outpost/domain/devcontainer.py#L43-L57) | Its tests in `tests/domain/test_devcontainer.py`; the doc table in [docs/configuration.md](docs/configuration.md) |
+| Change a step of `./outpost up` | [`Up.run`](src/outpost/launcher/application/up.py#L63-L83) | The order test [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](tests/launcher/test_up.py#L64-L88) |
+| Add a launcher command | The parser in [`build_parser`](src/outpost/launcher/cli/main.py#L23-L60) | A handler in `src/outpost/launcher/cli/commands.py`, a use case in `src/outpost/launcher/application/`, its adapters from [`Launcher`](src/outpost/launcher/cli/wiring.py#L51-L146) |
+| Add an in-container command | The parser in [`build_parser`](src/outpost/container/cli/main.py#L82-L111) | A use case in `src/outpost/container/application/`, its adapters from [`Tool`](src/outpost/container/cli/wiring.py#L21-L57) |
+| Change how routes reach the proxy | [`Routes.add`](src/outpost/container/application/routes.py#L28-L34) | The Caddy objects in [`caddy_route`](src/outpost/container/adapters/caddy.py#L31-L37); the stand-in API in `tests/container/test_adapters.py` |
+| Change the proxy itself | `image/caddy.json` and [`CaddyContainer`](src/outpost/container/adapters/proxy_container.py#L28-L109) | A changed config recreates the proxy and carries routes over in [`CaddyContainer._carry_routes_over`](src/outpost/container/adapters/proxy_container.py#L64-L73) |
+| Change what the image contains | `image/Dockerfile` | Paths it shares with the code live in [domain/layout.py](src/outpost/domain/layout.py), checked by `tests/image/test_image.py` |
+| Carry another login | [`Tool`](src/outpost/domain/credentials.py#L9-L11) | A source and a login in [`login_source`](src/outpost/launcher/adapters/logins.py#L136-L149) and [`tool_login`](src/outpost/launcher/adapters/logins.py#L152-L157) |
+| Add a port | A protocol in the side's `ports/` package | Its fake in `tests/fakes.py` next to [`FakeDocker`](tests/fakes.py#L119-L212), its adapter built in the side's `cli/wiring.py` |
 
 ## Rules the review checks
 
-- **Layers.** The domain imports nothing from Outpost and does no I/O. Ports import the domain only. The application imports the domain and ports. Adapters import the domain and ports, never the application. Only [`App`](src/outpost/cli/wiring.py#L60-L205) builds adapters.
-- **One place per decision.** A configuration `kind` becomes an adapter in exactly one factory; there is no other branch on a kind. Parsing tables such as [`_TLS`](src/outpost/config/loader.py#L199-L207) do the same for the file format.
-- **Domain types in signatures.** Pass [`WorktreeName`](src/outpost/domain/names.py#L45-L59), `Route`, `ImageRef`, `ServiceName` or `UserName`, not strings; a value is validated once, when it is built.
-- **Errors.** Raise the errors in [`OutpostError`](src/outpost/domain/errors.py#L8-L9)'s module; only [`main`](src/outpost/cli/main.py#L116-L128) turns them into messages and exit codes.
-- **No duplication.** Every command on the client, the host or the box goes through a `Shell`; the box reuses the host's shell through [`ContainerShell`](src/outpost/adapters/shell/container.py#L13-L33). Shared POSIX behaviour lives once in [`ShellBase`](src/outpost/adapters/shell/base.py#L18-L77).
-- **Generated files.** Files for the host are templates in `src/outpost/resources/` rendered by [`render_text`](src/outpost/adapters/interaction/templates.py#L23-L30); generated YAML is built as data and serialised, as in [`compose_override`](src/outpost/adapters/stacks/compose.py#L85-L108).
-- **Secrets.** Secrets travel as [`Secret`](src/outpost/domain/secrets.py#L8-L28), through stdin or files with mode 0600, never through arguments, environment listings or logs.
+- **Layers.** The domain imports nothing from Outpost and does no I/O. Use cases see the domain and their ports. Adapters implement ports and never call use cases. Only each side's `cli/wiring.py` builds adapters. The launcher and the in-container tool never import each other.
+- **One place per decision.** What Outpost refuses in devcontainer.json is decided once, in [`DevContainerSettings.parse`](src/outpost/domain/devcontainer.py#L86-L103); where things live in the container is decided once, in [domain/layout.py](src/outpost/domain/layout.py).
+- **Domain types in signatures.** Pass [`EnvironmentName`](src/outpost/domain/names.py#L18-L35), [`DnsName`](src/outpost/domain/names.py#L39-L63), [`Upstream`](src/outpost/domain/routes.py#L20-L45) or `ImageRef`, not strings; a value is checked once, when it is built.
+- **Errors.** Raise the errors of [`OutpostError`](src/outpost/domain/errors.py#L8-L9)'s module; only each side's `cli/main.py` turns them into messages and exit codes.
+- **Processes.** Every program runs through a [`Runner`](src/outpost/infra/process.py#L19-L42), so adapters are tested with [`FakeRunner`](tests/fakes.py#L47-L113).
+- **Secrets.** Secrets travel as [`Secret`](src/outpost/domain/secrets.py#L8-L28), through stdin into files with mode 0600, never through arguments, environment listings or logs.
+- **No mounts.** Nothing Outpost writes may bind-mount a host path into the dev container; files cross with [`Transfers`](src/outpost/launcher/application/transfers.py#L17-L61).
 
 ## Tests
 
-- Every port has an in-memory fake in `tests/fakes.py`; use cases are tested only through them, as in [`test_up_builds_then_runs_edge_box_router_then_clones`](tests/application/test_doctor_and_environment.py#L172-L189).
-- Adapters are tested on the arguments they produce, as in [`test_box_run_arguments_are_stable`](tests/adapters/test_shells_and_engine.py#L54-L76), or against a real local tool when it is safe, as in [`test_local_ca_issues_a_private_wildcard_once`](tests/adapters/test_tls_templates_credentials.py#L32-L53).
-- Strategy and layout are in [docs/testing.md](docs/testing.md).
+- Every port has an in-memory fake in `tests/fakes.py`; use cases are tested only through them, and the fakes share an event log so a test can assert the order of effects.
+- Adapters are tested on the commands they build, as in [`test_every_docker_command_carries_the_host`](tests/launcher/test_adapters.py#L47-L51), or against a local stand-in, as in [`CaddyStandIn`](tests/container/test_adapters.py#L34-L96).
+- Strategy, layout and the manual checklist are in [docs/testing.md](docs/testing.md).
 
 ## Documentation
 
-- Specialised guides live in `docs/`: [architecture](docs/architecture.md), [configuration](docs/configuration.md), [extending](docs/extending.md), [testing](docs/testing.md), [decisions](docs/adr/).
-- A new configuration key, command or kind updates its guide in the same change.
-- Link code with a symbol and a line range, as this file does; the refresh tool fixes the numbers.
+- Specialised guides live in `docs/`: [architecture](docs/architecture.md), [setup](docs/setup.md), [configuration](docs/configuration.md), [stacks](docs/stacks.md), [testing](docs/testing.md), [decisions](docs/adr/).
+- A new configuration key, command or convention updates its guide in the same change.
+- Link code with a symbol and a line range, as this file does; `uv run python -m tools.line_refs` fixes the numbers.
 
 ## Commits and changes
 
 - Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
 - User-visible changes get a line under Unreleased in [CHANGELOG.md](CHANGELOG.md).
-- `outpost.yaml` stays out of git; only `outpost.example.yaml` is versioned, and it must keep loading, see [`test_example_loads_both_targets`](tests/config/test_loader.py#L40-L43).
+- `outpost.yaml` and `.outpost/` stay out of git; `outpost.example.yaml` is versioned and must keep loading, see [`test_the_example_loads`](tests/launcher/test_config.py#L35-L41).
