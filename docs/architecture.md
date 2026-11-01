@@ -34,15 +34,15 @@ your machine                         host (local Docker, or a Linux VM over SSH)
 The image's entrypoint, `image/entrypoint.sh`, runs whoever starts the container: `./outpost up`, `docker start`, or Docker after a reboot through `--restart unless-stopped`.
 
 1. It prepares cgroup v2 nesting and starts the inner Docker engine, which logs to `/var/log/outpost/dockerd.log`.
-2. `outpost boot` runs [`Boot.run`](../src/outpost/container/application/boot.py#L70-L91): [`ProxyStartup`](../src/outpost/container/application/boot.py#L36-L51) creates the `outpost` network and the proxy through [`CaddyContainer`](../src/outpost/container/adapters/proxy_container.py#L30-L132) and applies every route again (so a changed domain takes effect), new persisted volumes are handed to `dev`, then the init scripts run. Whatever fails, boot ends by writing a ready record named after this start.
+2. `outpost boot` runs [`Boot.run`](../src/outpost/container/application/boot.py#L74-L95): [`ProxyStartup`](../src/outpost/container/application/boot.py#L37-L55) creates the `outpost` network and the proxy through [`CaddyContainer`](../src/outpost/container/adapters/proxy_container.py#L30-L139), applies every route again (so a changed domain takes effect), and adds the proxy's CA to the container's own list through [`SystemTrust`](../src/outpost/container/adapters/system_trust.py#L11-L22); new persisted volumes are handed to `dev`, then the init scripts run. Whatever fails, boot ends by writing a ready record named after this start.
 3. The container lives as long as the inner engine. Stopping it stops the inner engine first, which stops the stacks cleanly within the container's 60-second stop timeout.
 
 ## Proxy and certificates
 
-- Caddy runs on the inner Docker as `outpost-proxy`, on the `outpost` network, listening on 443, with the base config `image/caddy.json`.
+- Caddy runs on the inner Docker as `outpost-proxy`, on the `outpost` network, listening on 443, with the base config `image/caddy.json`. The inner Docker publishes it on the dev container's 443, which the host's port reaches, and on the port in the URLs, so they work in the dev container too, where every program resolves `*.localhost` to the container (`nss-myhostname`).
 - Its admin API is a unix socket in `/var/lib/outpost/proxy/admin`, a folder only root and the docker group can enter; [`CaddyAdmin`](../src/outpost/container/adapters/caddy.py#L100-L174) adds and removes routes by `@id` through it. Never a TCP port: on a wildcard address Caddy skips its Host check, and every stack would reach the API.
 - Caddy saves every API change and restores it at start (`--resume`). When the base config or the proxy's arguments change, the proxy is recreated and its routes are carried over.
-- Caddy's internal CA issues a certificate per route name. Its root key stays in the state volume.
+- Caddy's internal CA issues a certificate per route name. Its root key stays in the state volume; the root itself is added to the dev container's CA list at every start.
 - `devcontainer` is a host alias of the proxy pointing at the dev container itself, for processes run outside the inner Docker.
 
 ## What persists

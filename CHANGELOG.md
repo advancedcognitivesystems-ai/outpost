@@ -8,6 +8,7 @@ All notable changes to Outpost. The format follows [Keep a Changelog](https://ke
 
 - `outpost proxy start` starts the proxy, or creates it again, with its routes; `./outpost up` does it when the proxy was stopped or removed since the container started.
 - `outpost route add` says when it attached a container to the `outpost` network, since a container created again leaves it.
+- A route's URL works in the dev container too, port included: every program resolves `*.localhost` to the container, the proxy is also published there on the port in the URLs, and the proxy's CA is added to the container's CA list at every start, which Node and Python's requests are pointed at.
 
 ### Fixed
 

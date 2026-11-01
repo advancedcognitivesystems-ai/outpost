@@ -49,3 +49,4 @@ The proxy was also checked on its own, from the host:
 - Compose services with the network declared, attached containers, `devcontainer:` upstreams, 502 for a closed upstream, `route rm` with patterns.
 - Only port 443 listens in the proxy; a stack on the `outpost` network cannot reach the API, a user outside the docker group is refused it.
 - Routes and the CA's fingerprint survive a restart of the proxy, its removal, a restart of the dev container, a recreation with a new domain and port; `destroy` makes a new CA.
+- In the dev container, as `dev`, curl, Python and Node open a route's URL as `outpost route ls` prints it, port included, with no option, also after a restart; Playwright's Chromium does after the `certutil` command in [stacks](stacks.md#calling-a-route-from-inside); from a stack, the same name reaches the stack itself.

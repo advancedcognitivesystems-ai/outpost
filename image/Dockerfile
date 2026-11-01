@@ -6,12 +6,19 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
+# Routes' URLs work in the container too: every program resolves `*.localhost` to the container
+# itself, as browsers and curl already do, and boot adds the proxy's CA to the system's list.
+# Node and Python's requests bring their own lists, so they are pointed at the system's.
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      bash-completion ca-certificates curl git gnupg iptables less openssh-client \
-      python3 sudo tar tini unzip; \
-    rm -rf /var/lib/apt/lists/*
+      bash-completion ca-certificates curl git gnupg iptables less libnss-myhostname \
+      openssh-client python3 sudo tar tini unzip; \
+    rm -rf /var/lib/apt/lists/*; \
+    sed -i 's/^hosts:.*/hosts: files myhostname dns/' /etc/nsswitch.conf
 
 # Docker Engine, for the inner Docker that runs the proxy and your stacks.
 RUN set -eux; \

@@ -23,9 +23,9 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 | Change what a running container may expose | [`exposure_problems`](src/outpost/domain/exposure.py#L42-L53) | It runs after `devcontainer up`, in [`Up.run`](src/outpost/launcher/application/up.py#L65-L86) |
 | Change a step of `./outpost up` | [`Up.run`](src/outpost/launcher/application/up.py#L65-L86) | The order test [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](tests/launcher/test_up.py#L70-L94) |
 | Add a launcher command | The parser in [`build_parser`](src/outpost/launcher/cli/main.py#L23-L60) | A handler in `src/outpost/launcher/cli/commands.py`, a use case in `src/outpost/launcher/application/`, its adapters from [`Launcher`](src/outpost/launcher/cli/wiring.py#L51-L147) |
-| Add an in-container command | The parser in [`build_parser`](src/outpost/container/cli/main.py#L101-L133) | A use case in `src/outpost/container/application/`, its adapters from [`InContainer`](src/outpost/container/cli/wiring.py#L26-L72) |
+| Add an in-container command | The parser in [`build_parser`](src/outpost/container/cli/main.py#L101-L133) | A use case in `src/outpost/container/application/`, its adapters from [`InContainer`](src/outpost/container/cli/wiring.py#L27-L77) |
 | Change how routes reach the proxy | [`Routes.add`](src/outpost/container/application/routes.py#L36-L43) | The Caddy objects in [`caddy_route`](src/outpost/container/adapters/caddy.py#L36-L42); the stand-in API in `tests/container/test_adapters.py` |
-| Change the proxy itself | `image/caddy.json` and [`CaddyContainer`](src/outpost/container/adapters/proxy_container.py#L30-L132) | A changed config recreates the proxy and carries routes over in [`CaddyContainer._carry_routes_over`](src/outpost/container/adapters/proxy_container.py#L79-L96) |
+| Change the proxy itself | `image/caddy.json` and [`CaddyContainer`](src/outpost/container/adapters/proxy_container.py#L30-L139) | A changed config recreates the proxy and carries routes over in [`CaddyContainer._carry_routes_over`](src/outpost/container/adapters/proxy_container.py#L81-L98) |
 | Change what the image contains | `image/Dockerfile` | Paths it shares with the code live in [domain/layout.py](src/outpost/domain/layout.py), checked by `tests/image/test_image.py` |
 | Carry another login | [`Tool`](src/outpost/domain/credentials.py#L9-L11) | A source and a login in [`login_source`](src/outpost/launcher/adapters/logins.py#L136-L149) and [`tool_login`](src/outpost/launcher/adapters/logins.py#L152-L157) |
 | Add a port | A protocol in the side's `ports/` package | Its fake in `tests/fakes.py` next to [`FakeDocker`](tests/fakes.py#L120-L207), its adapter built in the side's `cli/wiring.py` |
@@ -45,7 +45,7 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 ## Tests
 
 - Every port has an in-memory fake in `tests/fakes.py`; use cases are tested only through them, and the fakes share an event log so a test can assert the order of effects.
-- Adapters are tested on the commands they build, as in [`test_every_docker_command_carries_the_host`](tests/launcher/test_adapters.py#L48-L52), or against a local stand-in, as in [`CaddyStandIn`](tests/container/test_adapters.py#L42-L104).
+- Adapters are tested on the commands they build, as in [`test_every_docker_command_carries_the_host`](tests/launcher/test_adapters.py#L48-L52), or against a local stand-in, as in [`CaddyStandIn`](tests/container/test_adapters.py#L43-L105).
 - Strategy, layout and the manual checklist are in [docs/testing.md](docs/testing.md).
 
 ## Documentation

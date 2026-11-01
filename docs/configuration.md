@@ -11,7 +11,7 @@ The file is found by [`locate`](../src/outpost/launcher/config/loader.py#L26-L34
 | `name` | `main` | 1 to 30 lowercase letters, digits and `-`. Names the container `outpost-<name>` and its volumes |
 | `host` | `local` | `local`, or `ssh://user@host[:port]`; your ssh config applies |
 | `domain` | `dev.localhost` | Routes are `https://<route>.<domain>:<port>` |
-| `port` | `8443` | Port on `127.0.0.1` where the proxy answers, on the host and through the tunnel |
+| `port` | `8443` | Port on `127.0.0.1` where the proxy answers, on the host, through the tunnel, and in the dev container, so a URL is the same everywhere |
 | `devcontainer` | See below | devcontainer.json properties, merged over Outpost's defaults |
 | `init` | None | Scripts copied into the state volume and run in order, as root, at every start |
 | `credentials` | `[claude, gh]` | Logins checked and copied on every `up`; `[]` skips both |

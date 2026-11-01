@@ -28,6 +28,7 @@ from outpost.container.adapters.init_files import (
     ScriptDirectories,
 )
 from outpost.container.adapters.proxy_container import CaddyContainer
+from outpost.container.adapters.system_trust import SystemTrust
 from outpost.domain.errors import Unavailable
 from outpost.domain.names import DnsName
 from outpost.domain.routes import Route, Site, Upstream
@@ -175,11 +176,12 @@ def test_saved_routes_move_onto_a_new_base() -> None:
 # ------------------------------------------------------------------ the proxy's container
 
 
-def container(tmp_path: Path, runner: FakeRunner) -> CaddyContainer:
+def container(tmp_path: Path, runner: FakeRunner, site_port: int = 8443) -> CaddyContainer:
     base = tmp_path / "caddy.json"
     base.write_text(IMAGE_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
     return CaddyContainer(
         runner,
+        site_port=site_port,
         base_config=base,
         state=tmp_path / "proxy",
         socket_dir=tmp_path / "proxy" / "admin",
@@ -198,6 +200,7 @@ def test_a_missing_proxy_is_created_on_the_outpost_network(tmp_path: Path) -> No
     assert run[:5] == ("docker", "run", "--detach", "--name", "outpost-proxy")
     for expected in (
         "443:443",
+        "8443:443",
         "devcontainer:host-gateway",
         f"{tmp_path}/proxy/admin:/run/outpost",
     ):
@@ -213,6 +216,15 @@ def test_a_missing_proxy_is_created_on_the_outpost_network(tmp_path: Path) -> No
         "/etc/caddy/outpost.json",
     )
     assert (tmp_path / "proxy" / "data").is_dir()
+
+
+def test_the_port_in_the_urls_is_published_in_the_container_too(tmp_path: Path) -> None:
+    for site_port, published in ((8443, ["443:443", "8443:443"]), (443, ["443:443"])):
+        runner = FakeRunner()
+        runner.answer(["docker", "container", "inspect"], failed(1, "No such container"))
+        container(tmp_path, runner, site_port).ensure_running()
+        run = runner.argvs()[-1]
+        assert [run[i + 1] for i, part in enumerate(run) if part == "--publish"] == published
 
 
 def test_a_current_proxy_is_only_started(tmp_path: Path) -> None:
@@ -250,6 +262,19 @@ def test_an_unreadable_saved_config_is_set_aside(tmp_path: Path) -> None:
     assert not saved.exists()
     assert saved.with_suffix(".unreadable").read_text(encoding="utf-8") == "{"
     assert runner.argvs()[-1][:2] == ("docker", "run")
+
+
+# ------------------------------------------------------------------ the container's trust
+
+
+def test_the_proxys_ca_is_added_to_the_system_list_once(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    trust = SystemTrust(runner, path=tmp_path / "ca-certificates" / "outpost-ca.crt")
+    assert trust.trust("PEM one")
+    assert not trust.trust("PEM one")
+    assert trust.trust("PEM two")
+    assert (tmp_path / "ca-certificates" / "outpost-ca.crt").read_text() == "PEM two"
+    assert runner.argvs() == [("update-ca-certificates",)] * 2
 
 
 # ------------------------------------------------------------------ init scripts and record

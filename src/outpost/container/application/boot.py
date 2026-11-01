@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 
 from outpost.container.ports.init import BootStore, Ownership, Scripts
 from outpost.container.ports.proxy import Proxy, ProxyRuntime
+from outpost.container.ports.trust import TrustStore
 from outpost.domain.errors import OutpostError, Unavailable
 from outpost.domain.init import scripts_digest
 from outpost.domain.status import BootRecord, ContainerStatus
@@ -34,20 +35,23 @@ class Init:
 
 
 class ProxyStartup:
-    def __init__(self, runtime: ProxyRuntime, proxy: Proxy) -> None:
+    def __init__(self, runtime: ProxyRuntime, proxy: Proxy, trust: TrustStore) -> None:
         self._runtime = runtime
         self._proxy = proxy
+        self._trust = trust
 
     def run(self) -> int:
-        """Create or start the proxy, then apply every saved route again; returns their count.
+        """Create or start the proxy, apply every saved route again, then trust its CA here.
 
-        Applying them again rewrites their names when the domain changed.
+        Applying the routes again rewrites their names when the domain changed. Trusting the
+        CA lets programs in the container open the routes' URLs. Returns the routes' count.
         """
         self._runtime.ensure_running()
         self._proxy.wait_ready(PROXY_TIMEOUT)
         routes = self._proxy.routes()
         for route in routes:
             self._proxy.put(route)
+        self._trust.trust(self._proxy.root_certificate())
         return len(routes)
 
 

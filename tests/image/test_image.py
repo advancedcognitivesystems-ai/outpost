@@ -10,11 +10,13 @@ from pathlib import Path
 from outpost.container.adapters.caddy import SERVER, SOCKET_DIR_IN_PROXY
 from outpost.domain.layout import (
     ADMIN_SOCKET,
+    CA_BUNDLE,
     IMAGE_INIT_DIR,
     PROXY_BASE_CONFIG,
     PROXY_LISTEN_PORT,
     STATE,
     TOOL,
+    TRUSTED_CA,
     USER,
     WORKSPACES,
 )
@@ -48,6 +50,16 @@ def test_the_dockerfile_creates_the_user_and_the_paths() -> None:
     assert f"install -d -o {USER} -g {USER} {WORKSPACES}" in dockerfile
     assert f"install -d {STATE} {IMAGE_INIT_DIR}" in dockerfile
     assert f"COPY image/caddy.json {PROXY_BASE_CONFIG}" in dockerfile
+
+
+def test_route_urls_resolve_and_are_trusted_in_the_container() -> None:
+    dockerfile = text("Dockerfile")
+    assert "libnss-myhostname" in dockerfile
+    assert "hosts: files myhostname dns" in dockerfile
+    assert f"NODE_EXTRA_CA_CERTS={CA_BUNDLE}" in dockerfile
+    assert f"REQUESTS_CA_BUNDLE={CA_BUNDLE}" in dockerfile
+    assert str(TRUSTED_CA.parent) == "/usr/local/share/ca-certificates"
+    assert TRUSTED_CA.suffix == ".crt"
 
 
 def test_the_tool_on_the_path_runs_the_in_container_entry_point() -> None:

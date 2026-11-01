@@ -16,3 +16,4 @@ Caddy runs as a container of the inner Docker, on the `outpost` network. `outpos
 - A trusted root can sign any name: its key never leaves the state volume, and no stack can reach the API that could expose it.
 - Boot applies every route again, so a changed domain takes effect without registering routes anew.
 - A process run directly in the dev container is reached as `devcontainer:<port>` and must listen on all interfaces.
+- A route's URL works in the dev container as in the browser: the proxy is published there on the same port, and the container trusts the CA. Not from stacks, where `*.localhost` is each container itself; they call each other by name on a shared network.

@@ -32,6 +32,7 @@ class CaddyContainer:
         self,
         runner: Runner,
         *,
+        site_port: int,
         base_config: Path = Path(PROXY_BASE_CONFIG),
         state: Path = Path(PROXY_STATE),
         socket_dir: Path = Path(ADMIN_SOCKET).parent,
@@ -39,6 +40,7 @@ class CaddyContainer:
         image: str = PROXY_IMAGE,
     ) -> None:
         self._runner = runner
+        self._site_port = site_port
         self._base_config = base_config
         self._state = state
         self._socket_dir = socket_dir
@@ -107,8 +109,7 @@ class CaddyContainer:
             NETWORK,
             "--label",
             f"{PROXY_LABEL}={spec}",
-            "--publish",
-            f"{PROXY_LISTEN_PORT}:{PROXY_LISTEN_PORT}",
+            *self._published(),
             "--add-host",
             f"{DEVCONTAINER}:host-gateway",
             "--volume",
@@ -126,6 +127,12 @@ class CaddyContainer:
             "--config",
             CONFIG_IN_PROXY,
         ]
+
+    def _published(self) -> list[str]:
+        """The port the host's publication reaches, and the port in the routes' URLs, so those
+        URLs work in the dev container too."""
+        ports = dict.fromkeys((PROXY_LISTEN_PORT, self._site_port))
+        return [part for port in ports for part in ("--publish", f"{port}:{PROXY_LISTEN_PORT}")]
 
     def _docker(self, *argv: str, check: bool = False) -> CommandResult:
         result = self._runner.run(["docker", *argv])

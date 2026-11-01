@@ -14,6 +14,7 @@ from outpost.container.adapters.init_files import (
     ScriptDirectories,
 )
 from outpost.container.adapters.proxy_container import CaddyContainer
+from outpost.container.adapters.system_trust import SystemTrust
 from outpost.container.application.boot import Boot, Init, ProxyStartup, Status
 from outpost.container.application.routes import Routes
 from outpost.domain.layout import DEFAULT_DOMAIN, DEFAULT_PORT, ENV_DOMAIN, ENV_PERSIST, ENV_PORT
@@ -51,7 +52,11 @@ class InContainer:
         return Routes(self.site, self._proxy, DockerEngine(self._runner))
 
     def proxy_startup(self) -> ProxyStartup:
-        return ProxyStartup(CaddyContainer(self._runner), self._proxy)
+        return ProxyStartup(
+            CaddyContainer(self._runner, site_port=self.site.port),
+            self._proxy,
+            SystemTrust(self._runner),
+        )
 
     def boot(self) -> Boot:
         return Boot(

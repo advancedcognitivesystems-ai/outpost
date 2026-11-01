@@ -20,6 +20,7 @@ TRUST: dict[str, Sequence[str]] = {
     "linux": (
         "sudo cp {path} /usr/local/share/ca-certificates/outpost-ca.crt",
         "sudo update-ca-certificates",
+        "mkdir -p $HOME/.pki/nssdb && "
         "certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n outpost -i {path}   # Chrome",
     ),
 }

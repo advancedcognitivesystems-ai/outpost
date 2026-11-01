@@ -438,6 +438,18 @@ class FakeProxyRuntime:
 
 
 @dataclass
+class FakeTrust:
+    events: Events
+    trusted: list[str] = field(default_factory=list)
+
+    def trust(self, certificate: str) -> bool:
+        self.events.append(f"trust {certificate}")
+        changed = certificate not in self.trusted
+        self.trusted.append(certificate)
+        return changed
+
+
+@dataclass
 class FakeEngine:
     events: Events
     containers: dict[str, list[str]] = field(default_factory=dict)

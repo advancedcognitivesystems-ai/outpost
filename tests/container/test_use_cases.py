@@ -21,6 +21,7 @@ from tests.fakes import (
     FakeProxyRuntime,
     FakeScripts,
     FakeStore,
+    FakeTrust,
 )
 
 SITE = Site(DnsName("dev.localhost"), 8443)
@@ -75,9 +76,13 @@ def scripts(events: Events, codes: dict[str, int] | None = None) -> FakeScripts:
     return FakeScripts(events, listing, codes or {})
 
 
+def startup(events: Events, proxy: FakeProxy) -> ProxyStartup:
+    return ProxyStartup(FakeProxyRuntime(events), proxy, FakeTrust(events))
+
+
 def boot(events: Events, store: FakeStore, proxy: FakeProxy | None = None) -> Boot:
     return Boot(
-        proxy=ProxyStartup(FakeProxyRuntime(events), proxy or FakeProxy(events)),
+        proxy=startup(events, proxy or FakeProxy(events)),
         init=Init(scripts(events), store),
         store=store,
         ownership=FakeOwnership(events),
@@ -95,6 +100,7 @@ def test_boot_starts_the_proxy_reapplies_routes_then_inits_then_is_ready() -> No
         "proxy running",
         "proxy ready",
         "put api.feat-a feat-a-api-1:8080",
+        "trust PEM",
         "claim /opt/tools",
         "run 10-image.sh",
         "run 01-yours.sh",
@@ -108,8 +114,13 @@ def test_the_proxy_starts_alone_with_its_routes() -> None:
     events: Events = []
     proxy = FakeProxy(events)
     proxy.table[API.name.value] = API
-    assert ProxyStartup(FakeProxyRuntime(events), proxy).run() == 1
-    assert events == ["proxy running", "proxy ready", "put api.feat-a feat-a-api-1:8080"]
+    assert startup(events, proxy).run() == 1
+    assert events == [
+        "proxy running",
+        "proxy ready",
+        "put api.feat-a feat-a-api-1:8080",
+        "trust PEM",
+    ]
 
 
 def test_a_proxy_that_does_not_start_still_lets_boot_finish() -> None:
@@ -127,7 +138,7 @@ def test_boot_ends_ready_even_when_init_breaks() -> None:
     events: Events = []
     store = FakeStore()
     broken = Boot(
-        proxy=ProxyStartup(FakeProxyRuntime(events), FakeProxy(events)),
+        proxy=startup(events, FakeProxy(events)),
         init=Init(BrokenScripts(), store),
         store=store,
         ownership=FakeOwnership(events),

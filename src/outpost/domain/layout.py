@@ -22,6 +22,10 @@ PROXY_STATE = STATE / "proxy"
 PROXY_BASE_CONFIG = PurePosixPath("/etc/outpost/caddy.json")
 ADMIN_SOCKET = PROXY_STATE / "admin" / "admin.sock"
 """The proxy's admin API: a unix socket, reachable from the dev container only."""
+TRUSTED_CA = PurePosixPath("/usr/local/share/ca-certificates/outpost-ca.crt")
+"""The proxy's root, added to the container's own CA list at every start."""
+CA_BUNDLE = PurePosixPath("/etc/ssl/certs/ca-certificates.crt")
+"""The container's CA list, which the image points Node and Python's requests at."""
 
 TOOL = "outpost"
 NETWORK = "outpost"

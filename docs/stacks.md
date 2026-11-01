@@ -11,6 +11,13 @@ A stack is anything started on the inner Docker; it becomes reachable from your 
 
 A route answers 502 until its upstream listens. A name without a route fails at the TLS handshake, as `ERR_SSL_PROTOCOL_ERROR` in Chrome or error 35 in curl, because the proxy has no certificate for it: check `outpost route ls`.
 
+## Calling a route from inside
+
+- In the dev container, a route's URL works as in your browser, port included, so tests and agents use the URLs `outpost route ls` prints: `curl https://api.feat-a.dev.localhost:8443`.
+- Every program there resolves `*.localhost` to the container, the proxy listens there on 443 and on the port in the URLs, and the container trusts the proxy's CA: [`ProxyStartup`](../src/outpost/container/application/boot.py#L37-L55) adds it to the system's list at every start, through [`SystemTrust`](../src/outpost/container/adapters/system_trust.py#L11-L22). curl, git, Python and Go read that list; the image points Node and Python's requests at it with `NODE_EXTRA_CA_CERTS` and `REQUESTS_CA_BUNDLE`.
+- A browser started in the container, such as Playwright's Chromium, keeps its own list: add the root with `mkdir -p ~/.pki/nssdb && certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n outpost -i /usr/local/share/ca-certificates/outpost-ca.crt`, after `sudo apt-get install libnss3-tools`, or set Playwright's `ignoreHTTPSErrors`.
+- Stacks cannot use these names: in a container, `*.localhost` is that container itself. Stacks call each other by service or container name over HTTP, such as `http://api:8080`, on a network they share.
+
 ## Restarts
 
 - Routes and the CA survive restarts of the proxy and of the dev container, and recreations.

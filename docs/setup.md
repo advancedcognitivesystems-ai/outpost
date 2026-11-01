@@ -60,11 +60,13 @@ Registry logins stay on your machine: after `az acr login --name <registry>` or 
 | macOS | `security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db outpost-ca.pem` |
 | Windows | `certutil -user -addstore Root outpost-ca.pem` |
 | Ubuntu or Debian | `sudo cp outpost-ca.pem /usr/local/share/ca-certificates/outpost-ca.crt && sudo update-ca-certificates` |
-| Chrome on Linux | `certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n outpost -i outpost-ca.pem` |
+| Chrome on Linux | `mkdir -p $HOME/.pki/nssdb && certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n outpost -i outpost-ca.pem` |
 | Firefox | Settings, Certificates, Import |
 
-`./outpost ca` prints the commands for your system, from [`trust_instructions`](../src/outpost/launcher/cli/render.py#L68-L76). The root survives recreation; only `destroy` makes a new one.
+`./outpost ca` prints the commands for your system, from [`trust_instructions`](../src/outpost/launcher/cli/render.py#L69-L77). The root survives recreation; only `destroy` makes a new one.
 
 ## Names in the browser
 
 Chrome, Firefox and curl resolve every `*.localhost` name to your machine. Safari, and programs that ask the system's resolver, such as Python's, may not: add hosts entries, or set `domain` to a name whose DNS answers `127.0.0.1` for every subdomain.
+
+In the dev container, every program resolves them and trusts the CA: see [Calling a route from inside](stacks.md#calling-a-route-from-inside).
