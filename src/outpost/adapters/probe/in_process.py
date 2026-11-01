@@ -1,4 +1,4 @@
-"""Facts about the machine running Outpost, read with the standard library."""
+"""Facts about the client, read with the standard library so they work on macOS and Linux alike."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 _GB = 1024**3
 
 
-class LocalProbe:
+class InProcessProbe:
     def reachable(self) -> bool:
         return True
 

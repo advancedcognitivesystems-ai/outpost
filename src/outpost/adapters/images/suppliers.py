@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from outpost.domain.errors import Unavailable
-from outpost.domain.fingerprint import fingerprint
 from outpost.domain.names import ImageRef
 from outpost.ports.engine import ContainerEngine
 from outpost.ports.images import RegistryAuth
 from outpost.ports.shell import Shell
-
-HOST_STAGING = PurePosixPath("/tmp")
 
 
 class RegistryImages:
@@ -20,11 +17,15 @@ class RegistryImages:
         self._engine = host_engine
         self._auth = auth
 
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return self._auth.client_commands
+
     def ensure(self, ref: ImageRef) -> None:
-        if self._engine.image_exists(str(ref)):
+        if self._engine.image_exists(ref):
             return
         self._auth.login()
-        self._engine.pull(str(ref))
+        self._engine.pull(ref)
 
 
 class ClientImages:
@@ -43,17 +44,17 @@ class ClientImages:
         self._host = host
         self._same_machine = same_machine
 
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return () if self._same_machine else ("docker",)
+
     def ensure(self, ref: ImageRef) -> None:
-        if self._host_engine.image_exists(str(ref)):
+        if self._host_engine.image_exists(ref):
             return
-        if self._same_machine or not self._client_engine.image_exists(str(ref)):
+        if self._same_machine or not self._client_engine.image_exists(ref):
             raise Unavailable(f"image {ref} is not available locally; build or pull it first")
-        remote_archive = HOST_STAGING / f"outpost-image-{fingerprint(str(ref))}.tar"
         with tempfile.TemporaryDirectory(prefix="outpost-") as directory:
             archive = Path(directory) / "image.tar"
-            self._client_engine.save(str(ref), archive)
-            self._host.upload(archive, remote_archive)
-        try:
-            self._host_engine.load(remote_archive)
-        finally:
-            self._host.run(["rm", "-f", str(remote_archive)])
+            self._client_engine.save(ref, archive)
+            with self._host.staged(archive) as on_host:
+                self._host_engine.load(on_host)

@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from outpost.domain.credentials import Strategy, Tool
 from outpost.domain.errors import ConfigError
-from outpost.domain.names import Domain, ImageRef, Port, ProjectName
+from outpost.domain.names import Domain, ImageRef, Port, ProjectName, UserName
 from outpost.domain.resources import BoxLayout, HostResources
 from outpost.domain.routes import ExposedService
 
@@ -128,7 +128,7 @@ class ImageSpec:
 @dataclass(frozen=True)
 class BoxSpec:
     image: ImageSpec
-    user: str
+    user: UserName
     cpus: float | None
     memory_gb: int | None
     env: Mapping[str, str] = field(default_factory=dict)

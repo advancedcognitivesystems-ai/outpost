@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 from outpost.domain.config import Isolation
+from outpost.domain.names import ImageRef
 from outpost.domain.secrets import Secret
 from outpost.ports.engine import ContainerSpec, ContainerState
 from outpost.ports.shell import CommandResult, Shell
@@ -43,17 +44,17 @@ class DockerCliEngine:
         result = self._docker("info", "--format", "{{json .Runtimes}}")
         return result.ok and runtime in json.loads(result.stdout or "{}")
 
-    def image_exists(self, ref: str) -> bool:
-        return self._docker("image", "inspect", ref).ok
+    def image_exists(self, ref: ImageRef) -> bool:
+        return self._docker("image", "inspect", str(ref)).ok
 
-    def pull(self, ref: str) -> None:
-        self._docker("pull", ref).check()
+    def pull(self, ref: ImageRef) -> None:
+        self._docker("pull", str(ref)).check()
 
-    def build(self, context: PurePosixPath, tag: str) -> None:
-        self._docker("build", "--tag", tag, str(context)).check()
+    def build(self, context: PurePosixPath, tag: ImageRef) -> None:
+        self._docker("build", "--tag", str(tag), str(context)).check()
 
-    def save(self, ref: str, archive: Path) -> None:
-        self._docker("save", "--output", str(archive), ref).check()
+    def save(self, ref: ImageRef, archive: Path) -> None:
+        self._docker("save", "--output", str(archive), str(ref)).check()
 
     def load(self, archive: PurePosixPath) -> None:
         self._docker("load", "--input", str(archive)).check()
@@ -101,25 +102,15 @@ class DockerCliEngine:
         *,
         user: str | None = None,
         stdin: str | None = None,
-        workdir: PurePosixPath | None = None,
     ) -> CommandResult:
-        args = exec_arguments(
-            container, argv, user=user, workdir=workdir, keep_stdin=stdin is not None
-        )
+        args = exec_arguments(container, argv, user=user, keep_stdin=stdin is not None)
         result = self._shell.run([DOCKER, *args], stdin=stdin)
         return CommandResult(tuple(argv), result.code, result.stdout, result.stderr)
 
     def exec_interactive(
-        self,
-        container: str,
-        argv: Sequence[str],
-        *,
-        user: str | None = None,
-        workdir: PurePosixPath | None = None,
+        self, container: str, argv: Sequence[str], *, user: str | None = None
     ) -> int:
-        args = exec_arguments(
-            container, argv, user=user, workdir=workdir, keep_stdin=True, tty=True
-        )
+        args = exec_arguments(container, argv, user=user, keep_stdin=True, tty=True)
         return self._shell.run_interactive([DOCKER, *args])
 
     def copy_into(self, container: str, source: PurePosixPath, target: PurePosixPath) -> None:
@@ -144,15 +135,13 @@ def run_arguments(spec: ContainerSpec) -> list[str]:
         args += ["--network", network]
     for name, value in sorted(spec.env.items()):
         args += ["--env", f"{name}={value}"]
-    for env_file in spec.env_files:
-        args += ["--env-file", str(env_file)]
     for key, value in sorted(spec.labels.items()):
         args += ["--label", f"{key}={value}"]
     if spec.cpus is not None:
         args += ["--cpus", f"{spec.cpus:g}"]
     if spec.memory_gb is not None:
         args += ["--memory", f"{spec.memory_gb}g"]
-    return [*args, spec.image, *spec.command]
+    return [*args, str(spec.image), *spec.command]
 
 
 def exec_arguments(
@@ -160,7 +149,6 @@ def exec_arguments(
     argv: Sequence[str],
     *,
     user: str | None,
-    workdir: PurePosixPath | None,
     keep_stdin: bool,
     tty: bool = False,
 ) -> list[str]:
@@ -171,6 +159,4 @@ def exec_arguments(
         args.append("--tty")
     if user:
         args += ["--user", user]
-    if workdir:
-        args += ["--workdir", str(workdir)]
     return [*args, container, *argv]

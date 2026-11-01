@@ -137,9 +137,12 @@ class Node:
             raise ConfigError(self.at(key), "must be a non-empty mapping")
         return {str(name): Node(item, f"{self.at(key)}.{name}") for name, item in value.items()}
 
-    def value(self, key: str, build: Callable[[str], T]) -> T:
+    def value(self, key: str, build: Callable[[str], T], default: str | None = None) -> T:
         """Build a domain value from a string, reporting its rule violations at this key."""
-        raw = self.text(key)
+        return self.check(key, build, self.text(key, default))
+
+    def check(self, key: str, build: Callable[[str], T], raw: str) -> T:
+        """Apply a domain rule to a value read under `key`, reporting a violation at that key."""
         try:
             return build(raw)
         except InvalidValue as error:

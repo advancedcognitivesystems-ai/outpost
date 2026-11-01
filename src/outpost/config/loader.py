@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -11,6 +10,7 @@ import yaml
 
 from outpost.config.reader import Node
 from outpost.domain.config import (
+    DEFAULT_SSH_PORT,
     AcmeTls,
     AutoSource,
     AzureAcrAuth,
@@ -44,14 +44,22 @@ from outpost.domain.config import (
 )
 from outpost.domain.credentials import Strategy, Tool
 from outpost.domain.errors import ConfigError, InvalidValue
-from outpost.domain.names import Domain, ImageRef, Port, ProjectName, ServiceName, Subdomain
+from outpost.domain.names import (
+    Domain,
+    ImageRef,
+    Port,
+    ProjectName,
+    ServiceName,
+    Subdomain,
+    UserName,
+    plain_setting_name,
+    variable_name,
+)
+from outpost.domain.resources import state_path
 from outpost.domain.routes import ExposedService
 
 SUPPORTED_VERSION = 1
 DEFAULT_GH_TOKEN_ENV = "OUTPOST_GH_TOKEN"
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_SECRET_LIKE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
-_USER_NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
 
 class ConnectionKind(StrEnum):
@@ -146,7 +154,7 @@ def _ssh(node: Node) -> SshConnection:
     return SshConnection(
         host=node.text("host"),
         user=node.optional_text("user"),
-        port=_port(node, "port", 22),
+        port=_port(node, "port", int(DEFAULT_SSH_PORT)),
         identity_file=node.optional_text("identity_file"),
     )
 
@@ -160,11 +168,9 @@ _CONNECTIONS: dict[ConnectionKind, Callable[[Node], ConnectionSpec]] = {
 def _host(node: Node) -> HostSpec:
     spec = HostSpec(
         isolation=node.choice("isolation", Isolation, Isolation.SYSBOX),
-        state_dir=node.text("state_dir", "~/.outpost"),
+        state_dir=node.value("state_dir", state_path, "~/.outpost"),
         min_free_disk_gb=node.integer("min_free_disk_gb", 50),
     )
-    if not (spec.state_dir.startswith(("/", "~/")) or spec.state_dir == "~"):
-        raise ConfigError(node.at("state_dir"), "must be absolute or start with '~/'")
     node.done()
     return spec
 
@@ -234,13 +240,10 @@ _REGISTRY_AUTH: dict[RegistryAuthKind, Callable[[Node], RegistryAuthSpec]] = {
 
 
 def _box(node: Node) -> BoxSpec:
-    user = node.text("user", "dev")
-    if not _USER_NAME.match(user):
-        raise ConfigError(node.at("user"), "must be a lowercase Unix user name")
     memory = node.integer("memory_gb", minimum=1) if node.has("memory_gb") else None
     spec = BoxSpec(
         image=_image(node.child("image")),
-        user=user,
+        user=node.value("user", UserName, "dev"),
         cpus=node.optional_number("cpus"),
         memory_gb=memory,
         env=_box_env(node),
@@ -252,13 +255,7 @@ def _box(node: Node) -> BoxSpec:
 def _box_env(node: Node) -> dict[str, str]:
     env = node.text_map("env")
     for name in env:
-        if not _ENV_NAME.match(name):
-            raise ConfigError(node.at(f"env.{name}"), "is not a valid environment variable name")
-        if _SECRET_LIKE.search(name):
-            raise ConfigError(
-                node.at(f"env.{name}"),
-                "looks like a secret; secrets never go in outpost.yaml (see credentials)",
-            )
+        node.check(f"env.{name}", plain_setting_name, name)
     return env
 
 
@@ -352,7 +349,4 @@ def _port(node: Node, key: str, default: int | None = None) -> Port:
 
 
 def _env_name(node: Node, key: str, default: str | None = None) -> str:
-    name = node.text(key, default)
-    if not _ENV_NAME.match(name):
-        raise ConfigError(node.at(key), "is not a valid environment variable name")
-    return name
+    return node.value(key, variable_name, default)

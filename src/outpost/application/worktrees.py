@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from outpost.domain.config import ResolvedConfig
 from outpost.domain.errors import Unavailable
 from outpost.domain.names import WorktreeName
 from outpost.domain.worktrees import Worktree
@@ -19,16 +18,14 @@ class WorktreeStatus:
 
 
 class Worktrees:
-    def __init__(self, config: ResolvedConfig, repository: Repository, runner: StackRunner) -> None:
-        self._config = config
+    def __init__(self, repository: Repository, runner: StackRunner) -> None:
         self._repository = repository
         self._runner = runner
 
     def add(self, name: WorktreeName, *, branch: str | None, start: str | None) -> Worktree:
         if any(item.name == name for item in self._repository.worktrees()):
             raise Unavailable(f"worktree {name} already exists")
-        start_point = start or f"origin/{self._config.project.default_branch}"
-        return self._repository.add_worktree(name, branch or str(name), start_point)
+        return self._repository.add_worktree(name, branch or str(name), start)
 
     def remove(self, name: WorktreeName, *, force: bool) -> None:
         self.get(name)

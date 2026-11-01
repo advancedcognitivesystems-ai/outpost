@@ -13,7 +13,8 @@ from outpost.adapters.engine.docker_cli import DockerCliEngine
 from outpost.adapters.images.factory import build_image_supplier
 from outpost.adapters.interaction.factory import build_prompter
 from outpost.adapters.interaction.templates import PackageTemplates
-from outpost.adapters.probe.factory import build_client_probe, build_host_probe
+from outpost.adapters.probe.in_process import InProcessProbe
+from outpost.adapters.probe.shell_probe import ShellProbe
 from outpost.adapters.proxy.traefik import TraefikEdge, TraefikRouter
 from outpost.adapters.repository.git_cli import GitRepository
 from outpost.adapters.shell.container import ContainerShell
@@ -25,7 +26,7 @@ from outpost.application.box import BoxImage
 from outpost.application.checks import standard_checks
 from outpost.application.credentials import CredentialBinding, CredentialSync
 from outpost.application.doctor import Doctor
-from outpost.application.environment import Environment
+from outpost.application.environment import Environment, InnerRouter
 from outpost.application.session import BoxSession
 from outpost.application.stacks import Stacks
 from outpost.application.worktrees import Worktrees
@@ -34,6 +35,7 @@ from outpost.domain.config import ResolvedConfig, ToolCredentials
 from outpost.domain.errors import NotImplementedYet
 from outpost.domain.resources import Role
 from outpost.ports.engine import ContainerEngine
+from outpost.ports.images import ImageSupplier
 from outpost.ports.interaction import Prompter
 from outpost.ports.probe import MachineProbe
 from outpost.ports.repository import Repository
@@ -83,6 +85,12 @@ class App:
         return self._traced(build_host_shell(self.config.target.connection))
 
     @cached_property
+    def box_shell(self) -> Shell:
+        box = self.config.resources.name(Role.BOX)
+        user = str(self.config.box.user)
+        return ContainerShell(self.host_engine, self.host_shell, box, user)
+
+    @cached_property
     def client_engine(self) -> ContainerEngine:
         return DockerCliEngine(self.client_shell)
 
@@ -91,13 +99,24 @@ class App:
         return DockerCliEngine(self.host_shell)
 
     @cached_property
-    def box_shell(self) -> Shell:
-        box = self.config.resources.name(Role.BOX)
-        return ContainerShell(self.host_engine, self.host_shell, box, self.config.box.user)
+    def inner_engine(self) -> ContainerEngine:
+        return DockerCliEngine(self.box_shell)
 
     @cached_property
     def host_probe(self) -> MachineProbe:
-        return build_host_probe(self.config.target.connection, self.host_shell)
+        return ShellProbe(self.host_shell)
+
+    @cached_property
+    def images(self) -> ImageSupplier:
+        return build_image_supplier(
+            self.config.box.image,
+            client=self.client_shell,
+            client_engine=self.client_engine,
+            host=self.host_shell,
+            host_engine=self.host_engine,
+            same_machine=self.config.target.runs_on_client,
+            environ=self._environ,
+        )
 
     # ---------------------------------------------------------------- credentials
 
@@ -125,7 +144,8 @@ class App:
     def doctor(self) -> Doctor:
         checks = standard_checks(
             self.config,
-            client=build_client_probe(),
+            client=InProcessProbe(),
+            client_needs=[self.host_shell, self.images, *self.credentials.sources_in_use],
             host=self.host_probe,
             host_description=self.host_shell.description,
             engine=self.host_engine,
@@ -135,7 +155,7 @@ class App:
 
     @cached_property
     def repository(self) -> Repository:
-        return GitRepository(self.box_shell, self.config.box_layout)
+        return GitRepository(self.box_shell, self.config.box_layout, self.config.project)
 
     @cached_property
     def stack_runner(self) -> StackRunner:
@@ -145,30 +165,28 @@ class App:
     def environment(self) -> Environment:
         config = self.config
         target = config.target
+        box_image = BoxImage(
+            config,
+            self.host_shell,
+            self.host_engine,
+            PackageTemplates(),
+            self.stack_runner.boot_script(),
+        )
         return Environment(
             config=config,
             doctor=self.doctor,
             host=self.host_shell,
             host_probe=self.host_probe,
             engine=self.host_engine,
-            images=build_image_supplier(
-                config.box.image,
-                client=self.client_shell,
-                client_engine=self.client_engine,
-                host=self.host_shell,
-                host_engine=self.host_engine,
-                same_machine=target.runs_on_client,
-                environ=self._environ,
-            ),
-            box_image=BoxImage(
-                config, self.host_shell, self.host_engine, PackageTemplates(), TraefikRouter()
-            ),
+            images=self.images,
+            box_image=box_image,
             tls=build_tls(
                 target.edge.tls, self.host_shell, target.edge.domain, config.project.name
             ),
             edge=TraefikEdge(
                 self.host_shell, config.resources, target.edge, config.resources.name(Role.BOX)
             ),
+            router=InnerRouter(self.inner_engine, TraefikRouter()),
             credentials=self.credentials,
             repository=self.repository,
             prompter=self.prompter,
@@ -176,7 +194,7 @@ class App:
 
     @cached_property
     def worktrees(self) -> Worktrees:
-        return Worktrees(self.config, self.repository, self.stack_runner)
+        return Worktrees(self.repository, self.stack_runner)
 
     @cached_property
     def stacks(self) -> Stacks:

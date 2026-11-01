@@ -3,7 +3,15 @@ from __future__ import annotations
 import pytest
 
 from outpost.domain.errors import InvalidValue
-from outpost.domain.names import Domain, Port, ProjectName, ServiceName, Subdomain, WorktreeName
+from outpost.domain.names import (
+    Domain,
+    ImageRef,
+    Port,
+    ProjectName,
+    ServiceName,
+    Subdomain,
+    WorktreeName,
+)
 from outpost.domain.resources import HostResources, Role, expand_home
 from outpost.domain.routes import ExposedService, plan_routes, stack_project, worktree_of_stack
 
@@ -64,7 +72,7 @@ def test_stack_names_round_trip() -> None:
 def test_host_object_names() -> None:
     names = HostResources(project=ProjectName("acme"))
     assert names.name(Role.BOX) == "outpost-acme-box"
-    assert names.box_image("abc") == "outpost-acme-box:abc"
+    assert names.box_image("abc") == ImageRef("outpost-acme-box:abc")
 
 
 def test_expand_home() -> None:

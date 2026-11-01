@@ -8,13 +8,13 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from outpost.cli import render
 from outpost.cli.wiring import App, Options, standalone_prompter
 from outpost.domain.credentials import Tool
 from outpost.domain.errors import ConfigError, InvalidValue, NotImplementedYet
-from outpost.domain.names import WorktreeName
 from outpost.ports.engine import ContainerState
 
 EXAMPLE_FILE = "outpost.example.yaml"
@@ -184,9 +184,13 @@ def tls_status(args: argparse.Namespace) -> int:
     raise NotImplementedYet("`outpost tls status` is designed but not built yet")
 
 
-def worktree_name(value: str) -> WorktreeName:
-    """argparse type for worktree arguments: the domain rule, reported as a usage error."""
-    try:
-        return WorktreeName(value)
-    except InvalidValue as error:
-        raise argparse.ArgumentTypeError(str(error)) from None
+def argument[T](build: Callable[[str], T]) -> Callable[[str], T]:
+    """argparse type for a domain value: its rule, reported as a usage error."""
+
+    def parse(value: str) -> T:
+        try:
+            return build(value)
+        except InvalidValue as error:
+            raise argparse.ArgumentTypeError(str(error)) from None
+
+    return parse

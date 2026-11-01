@@ -6,9 +6,10 @@ from typing import Protocol
 
 from outpost.domain.credentials import AuthState, Tool
 from outpost.domain.secrets import Secret
+from outpost.ports.shell import ClientNeeds
 
 
-class SecretSource(Protocol):
+class SecretSource(ClientNeeds, Protocol):
     @property
     def description(self) -> str:
         """Where the secret is read from, for messages; never the secret itself."""

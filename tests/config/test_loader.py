@@ -92,6 +92,8 @@ def test_unknown_target_is_named() -> None:
         (lambda d: d["stacks"]["expose"][1].update(subdomain="web"), "stacks.expose"),
         (lambda d: d["targets"]["azure"]["connection"].update(port=70000), "connection.port"),
         (lambda d: d.update(default_target="aws"), "default_target"),
+        (lambda d: d["box"].update(user="Root User"), "box.user"),
+        (lambda d: d["targets"]["wsl"]["host"].update(state_dir="relative"), "host.state_dir"),
         (
             lambda d: d["targets"]["wsl"]["image"].update(registry_auth={"kind": "azure-acr"}),
             "targets.wsl.image.registry_auth",

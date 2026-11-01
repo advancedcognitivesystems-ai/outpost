@@ -1,4 +1,8 @@
-"""A private CA on the host and one wildcard certificate it signs, made with openssl."""
+"""A private CA on the host and one wildcard certificate it signs, made with openssl.
+
+The CA's key stays in the TLS directory; only the leaf certificate and its key go into the
+`edge` subdirectory, which is all the edge container ever sees.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from outpost.ports.shell import Shell
 
 CA_VALIDITY_DAYS = 3650
 LEAF_VALIDITY_DAYS = 397
+_PRIVATE_OPENSSL = 'umask 077 && exec openssl "$@"'
 
 
 @dataclass(frozen=True)
@@ -27,16 +32,8 @@ class _Files:
         return self.directory / "ca.crt"
 
     @property
-    def key(self) -> PurePosixPath:
-        return self.directory / "wildcard.key"
-
-    @property
     def request(self) -> PurePosixPath:
         return self.directory / "wildcard.csr"
-
-    @property
-    def certificate(self) -> PurePosixPath:
-        return self.directory / "wildcard.crt"
 
     @property
     def extensions(self) -> PurePosixPath:
@@ -45,6 +42,18 @@ class _Files:
     @property
     def issued_for(self) -> PurePosixPath:
         return self.directory / "issued-for"
+
+    @property
+    def leaf_directory(self) -> PurePosixPath:
+        return self.directory / "edge"
+
+    @property
+    def key(self) -> PurePosixPath:
+        return self.leaf_directory / "wildcard.key"
+
+    @property
+    def certificate(self) -> PurePosixPath:
+        return self.leaf_directory / "wildcard.crt"
 
 
 class LocalCertificateAuthority:
@@ -65,7 +74,8 @@ class LocalCertificateAuthority:
         return self._host.read_file(_Files(layout.tls_dir).ca_certificate)
 
     def _openssl(self, *args: str) -> None:
-        self._host.run(["openssl", *args]).check()
+        """openssl with a private umask, so keys are never readable by others, even briefly."""
+        self._host.run(["sh", "-c", _PRIVATE_OPENSSL, "sh", *args]).check()
 
     def _create_authority(self, files: _Files) -> None:
         self._host.ensure_directory(files.directory)
@@ -77,10 +87,10 @@ class LocalCertificateAuthority:
             "-addext", "basicConstraints=critical,CA:TRUE",
             "-addext", "keyUsage=critical,keyCertSign,cRLSign",
         )  # fmt: skip
-        self._host.run(["chmod", "600", str(files.ca_key)]).check()
 
     def _issue(self, files: _Files) -> None:
         domain = str(self._domain)
+        self._host.ensure_directory(files.leaf_directory)
         self._host.write_file(
             files.extensions,
             f"subjectAltName=DNS:*.{domain},DNS:{domain}\n"
@@ -99,5 +109,5 @@ class LocalCertificateAuthority:
             "-days", str(LEAF_VALIDITY_DAYS),
             "-out", str(files.certificate), "-extfile", str(files.extensions),
         )  # fmt: skip
-        self._host.run(["chmod", "600", str(files.key)]).check()
+        self._host.run(["chmod", "644", str(files.certificate), str(files.ca_certificate)]).check()
         self._host.write_file(files.issued_for, domain)

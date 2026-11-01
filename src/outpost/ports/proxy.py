@@ -20,13 +20,13 @@ class EdgeProxy(Protocol):
 class RouterConvention(Protocol):
     @property
     def network(self) -> str:
-        """Network a stack service must join so that the router reaches it."""
+        """Network of the inner engine that the router and exposed services share."""
+        ...
+
+    def container(self) -> ContainerSpec:
+        """The router, run on the box's inner engine."""
         ...
 
     def labels(self, route: Route) -> Mapping[str, str]:
         """Container labels that declare this route to the router."""
-        ...
-
-    def bootstrap_script(self) -> str:
-        """Shell lines, run by the box at start, that make sure the router is running."""
         ...

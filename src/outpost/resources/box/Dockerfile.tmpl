@@ -34,12 +34,14 @@ RUN set -eux; \
     curl -fsSL https://claude.ai/install.sh | HOME=/opt/claude bash; \
     ln -sf /opt/claude/.local/bin/claude /usr/local/bin/claude
 
-# The box user, allowed to use Docker and sudo.
+# The box user, allowed to use Docker and sudo. /workspaces is created here, owned by the user,
+# so the empty workspaces volume takes that owner the first time it is mounted.
 RUN set -eux; \
     id -u {{user}} >/dev/null 2>&1 || useradd --create-home --shell /bin/bash {{user}}; \
     usermod -aG docker {{user}}; \
     echo "{{user}} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/outpost; \
-    chmod 0440 /etc/sudoers.d/outpost
+    chmod 0440 /etc/sudoers.d/outpost; \
+    install -d -o {{user}} -g {{user}} /workspaces
 
 COPY outpost-init.sh /usr/local/bin/outpost-init
 RUN chmod 0755 /usr/local/bin/outpost-init

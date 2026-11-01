@@ -23,12 +23,12 @@ Install the hooks once with `uv run pre-commit install`, so they run on every co
 | `tests/config` | The loader, on the example file and on targeted breakages | Each error asserts the key path it names |
 | `tests/adapters` | Shells, Docker arguments, Traefik settings, compose override, local CA, templates, sources | Fake shell answers; real `openssl` and local files where safe |
 | `tests/application` | Doctor, credentials, converge, `up`, worktrees, stacks | Fakes only |
-| `tests/cli` | Exit codes, usage errors, `init` | Through [`main`](../src/outpost/cli/main.py#L110-L122) |
+| `tests/cli` | Exit codes, usage errors, `init` | Through [`main`](../src/outpost/cli/main.py#L116-L128) |
 | `tests/test_doc_references.py` | Every code link in the docs | Fails on a stale line range |
 
 ## Fakes
 
-`tests/fakes.py` holds one fake per port. [`FakeShell`](../tests/fakes.py#L28-L82) answers by the longest matching argument prefix and records every call, stdin and written file; [`FakeEngine`](../tests/fakes.py#L86-L176) keeps containers, images and an event log, so tests can assert order, as in [`test_up_builds_runs_edge_then_box_then_clones`](../tests/application/test_doctor_and_environment.py#L119-L135).
+`tests/fakes.py` holds one fake per port. [`FakeShell`](../tests/fakes.py#L29-L96) answers by the longest matching argument prefix and records every call, stdin and written file; [`FakeEngine`](../tests/fakes.py#L100-L184) keeps containers, images and an event log, so tests can assert order, as in [`test_up_builds_then_runs_edge_box_router_then_clones`](../tests/application/test_doctor_and_environment.py#L172-L189).
 
 ## Not covered yet
 

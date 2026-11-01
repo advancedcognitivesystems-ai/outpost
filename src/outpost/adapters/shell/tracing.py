@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from outpost.ports.shell import CommandResult, Shell
@@ -20,6 +21,10 @@ class TracingShell:
     @property
     def description(self) -> str:
         return self._inner.description
+
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return self._inner.client_commands
 
     def run(
         self,
@@ -47,6 +52,16 @@ class TracingShell:
         self._trace(f"read {path}")
         return self._inner.read_file(path)
 
+    def remove_file(self, path: PurePosixPath) -> None:
+        self._trace(f"rm -f {path}")
+        self._inner.remove_file(path)
+
     def upload(self, source: Path, target: PurePosixPath) -> None:
         self._trace(f"upload {source} -> {target}")
         self._inner.upload(source, target)
+
+    @contextmanager
+    def staged(self, source: Path) -> Iterator[PurePosixPath]:
+        with self._inner.staged(source) as target:
+            self._trace(f"staged {source} at {target}")
+            yield target

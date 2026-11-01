@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from outpost.domain.config import Isolation
+from outpost.domain.names import ImageRef
 from outpost.domain.secrets import Secret
 from outpost.ports.shell import CommandResult
 
@@ -36,14 +37,13 @@ class PortBinding:
 @dataclass(frozen=True)
 class ContainerSpec:
     name: str
-    image: str
+    image: ImageRef
     isolation: Isolation | None = None
     hostname: str | None = None
     mounts: tuple[Mount, ...] = ()
     ports: tuple[PortBinding, ...] = ()
     networks: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
-    env_files: tuple[PurePosixPath, ...] = ()
     labels: Mapping[str, str] = field(default_factory=dict)
     cpus: float | None = None
     memory_gb: int | None = None
@@ -67,13 +67,13 @@ class ContainerEngine(Protocol):
 
     def supports(self, isolation: Isolation) -> bool: ...
 
-    def image_exists(self, ref: str) -> bool: ...
+    def image_exists(self, ref: ImageRef) -> bool: ...
 
-    def pull(self, ref: str) -> None: ...
+    def pull(self, ref: ImageRef) -> None: ...
 
-    def build(self, context: PurePosixPath, tag: str) -> None: ...
+    def build(self, context: PurePosixPath, tag: ImageRef) -> None: ...
 
-    def save(self, ref: str, archive: Path) -> None:
+    def save(self, ref: ImageRef, archive: Path) -> None:
         """Write an image to an archive on this engine's machine."""
         ...
 
@@ -106,16 +106,10 @@ class ContainerEngine(Protocol):
         *,
         user: str | None = None,
         stdin: str | None = None,
-        workdir: PurePosixPath | None = None,
     ) -> CommandResult: ...
 
     def exec_interactive(
-        self,
-        container: str,
-        argv: Sequence[str],
-        *,
-        user: str | None = None,
-        workdir: PurePosixPath | None = None,
+        self, container: str, argv: Sequence[str], *, user: str | None = None
     ) -> int: ...
 
     def copy_into(self, container: str, source: PurePosixPath, target: PurePosixPath) -> None:

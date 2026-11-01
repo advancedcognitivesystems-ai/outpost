@@ -7,26 +7,22 @@ from collections.abc import Sequence
 from outpost.application.credentials import CredentialSync
 from outpost.application.doctor import Check
 from outpost.domain.checks import CheckResult
-from outpost.domain.config import (
-    AcmeTls,
-    AzureAcrAuth,
-    CommandSource,
-    ImageSource,
-    Isolation,
-    ResolvedConfig,
-)
-from outpost.domain.credentials import Strategy, Tool
+from outpost.domain.config import Isolation, ResolvedConfig
+from outpost.domain.credentials import Tool
 from outpost.domain.names import Domain
 from outpost.domain.resources import Role
 from outpost.ports.engine import ContainerEngine, ContainerState
 from outpost.ports.probe import MachineProbe
+from outpost.ports.shell import ClientNeeds
 
 
 class ClientTools(Check):
-    def __init__(self, probe: MachineProbe, tools: Sequence[str]) -> None:
+    """Every program the configured adapters will run on this machine."""
+
+    def __init__(self, probe: MachineProbe, needs: Sequence[ClientNeeds]) -> None:
         super().__init__("client-tools", "Tools on this machine")
         self._probe = probe
-        self._tools = tuple(tools)
+        self._tools = tuple(dict.fromkeys(tool for need in needs for tool in need.client_commands))
 
     def run(self) -> CheckResult:
         missing = [tool for tool in self._tools if not self._probe.has_command(tool)]
@@ -139,40 +135,26 @@ class ToolLogin(Check):
         state = self._credentials.state(self._tool)
         if state.valid:
             return self.ok(state.detail)
+        if self._credentials.skips(self._tool):
+            return self.warn(state.detail or "not logged in", "strategy: skip, log in yourself")
         return self.fail(state.detail or "not logged in", "run `outpost creds sync`", fixable=True)
 
     def fix(self) -> None:
         self._credentials.sync(only=self._tool)
 
 
-def required_client_tools(config: ResolvedConfig) -> tuple[str, ...]:
-    """Commands this configuration runs on the client, beyond Outpost's own."""
-    tools: list[str] = []
-    remote = not config.target.runs_on_client
-    if remote:
-        tools += ["ssh", "scp"]
-    image = config.box.image
-    if image.source is ImageSource.LOCAL and remote:
-        tools.append("docker")
-    if isinstance(image.auth, AzureAcrAuth):
-        tools.append("az")
-    for tool in config.credentials.tools:
-        if tool.strategy is Strategy.COPY and isinstance(tool.source, CommandSource):
-            tools.append(tool.source.argv[0])
-    return tuple(dict.fromkeys(tools))
-
-
 def standard_checks(
     config: ResolvedConfig,
     *,
     client: MachineProbe,
+    client_needs: Sequence[ClientNeeds],
     host: MachineProbe,
     host_description: str,
     engine: ContainerEngine,
     credentials: CredentialSync,
 ) -> list[Check]:
     target = config.target
-    checks: list[Check] = [ClientTools(client, required_client_tools(config))]
+    checks: list[Check] = [ClientTools(client, client_needs)]
     if not target.runs_on_client:
         checks.append(HostReachable(host, host_description))
     checks += [
@@ -180,7 +162,7 @@ def standard_checks(
         IsolationAvailable(engine, target.host.isolation),
         FreeDisk(host, target.host.state_dir, target.host.min_free_disk_gb),
     ]
-    if isinstance(target.edge.tls, AcmeTls):
+    if not target.edge.domain.is_loopback:
         checks.append(WildcardDns(client, target.edge.domain))
     checks.append(BoxRunning(engine, config.resources.name(Role.BOX)))
     checks += [ToolLogin(credentials, tool) for tool in credentials.tools]

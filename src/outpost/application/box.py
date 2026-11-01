@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from outpost.domain.config import ResolvedConfig
 from outpost.domain.fingerprint import fingerprint
+from outpost.domain.names import ImageRef
 from outpost.domain.resources import (
     BOX_DOCKER_DATA,
     BOX_EXCHANGE,
@@ -13,7 +14,6 @@ from outpost.domain.resources import (
 )
 from outpost.ports.engine import ContainerEngine, ContainerSpec, Mount, MountKind
 from outpost.ports.interaction import TemplateRenderer
-from outpost.ports.proxy import RouterConvention
 from outpost.ports.shell import Shell
 
 DOCKERFILE_TEMPLATE = "box/Dockerfile.tmpl"
@@ -29,22 +29,20 @@ class BoxImage:
         host: Shell,
         engine: ContainerEngine,
         templates: TemplateRenderer,
-        router: RouterConvention,
+        boot_script: str,
     ) -> None:
         self._config = config
         self._host = host
         self._engine = engine
         self._templates = templates
-        self._router = router
+        self._boot_script = boot_script
 
-    def ensure(self, layout: HostLayout) -> str:
+    def ensure(self, layout: HostLayout) -> ImageRef:
         box = self._config.box
         dockerfile = self._templates.render(
-            DOCKERFILE_TEMPLATE, {"base_image": str(box.image.ref), "user": box.user}
+            DOCKERFILE_TEMPLATE, {"base_image": str(box.image.ref), "user": str(box.user)}
         )
-        init = self._templates.render(
-            INIT_TEMPLATE, {"router_bootstrap": self._router.bootstrap_script()}
-        )
+        init = self._templates.render(INIT_TEMPLATE, {"boot": self._boot_script})
         tag = self._config.resources.box_image(fingerprint(dockerfile, init))
         if not self._engine.image_exists(tag):
             context = layout.box_build_dir
@@ -54,14 +52,14 @@ class BoxImage:
         return tag
 
 
-def box_container(config: ResolvedConfig, layout: HostLayout, image: str) -> ContainerSpec:
+def box_container(config: ResolvedConfig, layout: HostLayout, image: ImageRef) -> ContainerSpec:
     names = config.resources
     box = config.box
     return ContainerSpec(
         name=names.name(Role.BOX),
         image=image,
         isolation=config.target.host.isolation,
-        hostname=f"outpost-{config.project.name}",
+        hostname=names.prefix,
         mounts=(
             Mount(MountKind.VOLUME, names.name(Role.WORKSPACES), BOX_WORKSPACES),
             Mount(MountKind.VOLUME, names.name(Role.DOCKER_DATA), BOX_DOCKER_DATA),

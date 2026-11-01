@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from outpost.domain.config import GitIdentity, Isolation
 from outpost.domain.credentials import AuthState, Tool
-from outpost.domain.names import ImageRef, WorktreeName
+from outpost.domain.names import ImageRef, ServiceName, WorktreeName
 from outpost.domain.resources import HostLayout
 from outpost.domain.routes import Route
 from outpost.domain.secrets import Secret
@@ -28,8 +29,9 @@ class _Response:
 class FakeShell:
     """Answers commands by longest matching argv prefix; records everything it is asked."""
 
-    def __init__(self, description: str = "fake") -> None:
+    def __init__(self, description: str = "fake", client_commands: tuple[str, ...] = ()) -> None:
         self.description = description
+        self.client_commands = client_commands
         self.calls: list[tuple[str, ...]] = []
         self.stdins: list[str | None] = []
         self.interactive: list[tuple[str, ...]] = []
@@ -75,8 +77,20 @@ class FakeShell:
     def read_file(self, path: PurePosixPath) -> str | None:
         return self.files.get(path)
 
+    def remove_file(self, path: PurePosixPath) -> None:
+        self.files.pop(path, None)
+
     def upload(self, source: Path, target: PurePosixPath) -> None:
         self.files[target] = source.read_text(encoding="utf-8")
+
+    @contextmanager
+    def staged(self, source: Path) -> Iterator[PurePosixPath]:
+        target = PurePosixPath("/tmp/staged") / source.name
+        self.upload(source, target)
+        try:
+            yield target
+        finally:
+            self.remove_file(target)
 
     def ran(self, *prefix: str) -> bool:
         return any(call[: len(prefix)] == prefix for call in self.calls)
@@ -98,19 +112,19 @@ class FakeEngine:
     def supports(self, isolation: Isolation) -> bool:
         return isolation is Isolation.PRIVILEGED
 
-    def image_exists(self, ref: str) -> bool:
-        return ref in self.images
+    def image_exists(self, ref: ImageRef) -> bool:
+        return str(ref) in self.images
 
-    def pull(self, ref: str) -> None:
+    def pull(self, ref: ImageRef) -> None:
         self.events.append(f"pull {ref}")
-        self.images.add(ref)
+        self.images.add(str(ref))
 
-    def build(self, context: PurePosixPath, tag: str) -> None:
+    def build(self, context: PurePosixPath, tag: ImageRef) -> None:
         self.events.append(f"build {tag}")
-        self.images.add(tag)
+        self.images.add(str(tag))
 
-    def save(self, ref: str, archive: Path) -> None:
-        archive.write_text(ref, encoding="utf-8")
+    def save(self, ref: ImageRef, archive: Path) -> None:
+        archive.write_text(str(ref), encoding="utf-8")
 
     def load(self, archive: PurePosixPath) -> None:
         self.events.append(f"load {archive}")
@@ -158,17 +172,11 @@ class FakeEngine:
         *,
         user: str | None = None,
         stdin: str | None = None,
-        workdir: PurePosixPath | None = None,
     ) -> CommandResult:
         return CommandResult(tuple(argv), 0, "", "")
 
     def exec_interactive(
-        self,
-        container: str,
-        argv: Sequence[str],
-        *,
-        user: str | None = None,
-        workdir: PurePosixPath | None = None,
+        self, container: str, argv: Sequence[str], *, user: str | None = None
     ) -> int:
         return 0
 
@@ -199,9 +207,15 @@ class FakePrompter:
 
 
 class FakeSecretSource:
-    def __init__(self, value: str | None, description: str = "fake source") -> None:
+    def __init__(
+        self,
+        value: str | None,
+        description: str = "fake source",
+        client_commands: tuple[str, ...] = (),
+    ) -> None:
         self.value = value
         self.description = description
+        self.client_commands = client_commands
 
     def read(self) -> Secret | None:
         return Secret(self.value) if self.value else None
@@ -268,10 +282,10 @@ class FakeRepository:
     def is_cloned(self) -> bool:
         return self.cloned
 
-    def clone(self, url: str, branch: str) -> None:
+    def clone(self) -> None:
         self.cloned = True
 
-    def add_worktree(self, name: WorktreeName, branch: str, start_point: str) -> Worktree:
+    def add_worktree(self, name: WorktreeName, branch: str, start: str | None) -> Worktree:
         created = Worktree(name, branch, PurePosixPath("/workspaces/acme/worktrees") / str(name))
         self.items.append(created)
         return created
@@ -302,23 +316,27 @@ class FakeStackRunner:
         names = [stack.worktree for stack in self.started]
         return tuple(name for name in names if name not in self.stopped)
 
-    def follow_logs(self, worktree: WorktreeName, service: str | None) -> int:
+    def follow_logs(self, worktree: WorktreeName, service: ServiceName | None) -> int:
         return 0
+
+    def boot_script(self) -> str:
+        return "start-stacks"
 
 
 class FakeRouter:
     network = "routes"
 
+    def container(self) -> ContainerSpec:
+        return ContainerSpec(name="router", image=ImageRef("router:1"))
+
     def labels(self, route: Route) -> Mapping[str, str]:
         return {"route": route.hostname}
-
-    def bootstrap_script(self) -> str:
-        return "start-router"
 
 
 class FakeImages:
     def __init__(self) -> None:
         self.ensured: list[ImageRef] = []
+        self.client_commands: tuple[str, ...] = ()
 
     def ensure(self, ref: ImageRef) -> None:
         self.ensured.append(ref)
@@ -334,7 +352,7 @@ class FakeTls:
 
 class FakeEdge:
     def prepare(self, layout: HostLayout, material: TlsMaterial) -> ContainerSpec:
-        return ContainerSpec(name="outpost-acme-edge", image="edge:1")
+        return ContainerSpec(name="outpost-acme-edge", image=ImageRef("edge:1"))
 
 
 class EchoTemplates:

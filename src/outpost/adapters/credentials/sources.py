@@ -18,6 +18,10 @@ class FileSecret:
     def description(self) -> str:
         return f"file {self._path}"
 
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return ()
+
     def read(self) -> Secret | None:
         try:
             content = self._path.read_text(encoding="utf-8")
@@ -37,6 +41,10 @@ class CommandSecret:
     def description(self) -> str:
         return f"command `{shlex.join(self._argv)}`"
 
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return self._argv[:1]
+
     def read(self) -> Secret | None:
         result = self._shell.run(self._argv)
         value = result.stdout.strip()
@@ -51,6 +59,10 @@ class EnvSecret:
     @property
     def description(self) -> str:
         return f"environment variable {self._name}"
+
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return ()
 
     def read(self) -> Secret | None:
         value = self._environ.get(self._name, "")

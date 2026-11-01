@@ -23,6 +23,10 @@ class SshShell(ShellBase):
         return f"ssh {self._destination}"
 
     @property
+    def client_commands(self) -> tuple[str, ...]:
+        return ("ssh", "scp")
+
+    @property
     def _destination(self) -> str:
         user = self._connection.user
         return f"{user}@{self._connection.host}" if user else self._connection.host

@@ -10,18 +10,23 @@ import yaml
 
 from outpost.domain.config import EdgeSpec
 from outpost.domain.fingerprint import fingerprint
-from outpost.domain.resources import ROUTER_PORT, ROUTES_NETWORK, HostLayout, HostResources, Role
+from outpost.domain.names import ImageRef
+from outpost.domain.resources import HostLayout, HostResources, Role
 from outpost.domain.routes import Route
 from outpost.domain.tls import AcmeIssuance, CertificateFiles, Plaintext, TlsMaterial
 from outpost.ports.engine import ContainerSpec, Mount, MountKind, PortBinding
 from outpost.ports.shell import Shell
 
-TRAEFIK_IMAGE = "traefik:v3"
+TRAEFIK_IMAGE = ImageRef("traefik:v3")
 ROUTER_CONTAINER = "outpost-router"
+ROUTES_NETWORK = "outpost-routes"
+ROUTER_PORT = 80
 RESOLVER = "outpost"
 CONFIG_DIR = PurePosixPath("/etc/traefik")
 DATA_DIR = PurePosixPath("/data")
 CERTS_DIR = PurePosixPath("/certs")
+ACME_CREDENTIALS_DIR = PurePosixPath("/run/secrets/acme")
+DOCKER_SOCKET = PurePosixPath("/var/run/docker.sock")
 CONFIG_LABEL = "outpost.edge-config"
 
 Config = dict[str, Any]
@@ -47,7 +52,7 @@ class TraefikEdge:
             mounts=self._mounts(layout, material),
             ports=self._ports(material),
             networks=(self._resources.name(Role.EDGE_NETWORK),),
-            env_files=_env_files(material),
+            env=_credential_files(material),
             labels={CONFIG_LABEL: fingerprint(static)},
         )
 
@@ -56,10 +61,15 @@ class TraefikEdge:
             Mount(MountKind.BIND, str(layout.edge_dir), CONFIG_DIR, read_only=True),
             Mount(MountKind.VOLUME, self._resources.name(Role.EDGE_DATA), DATA_DIR),
         ]
-        if isinstance(material, CertificateFiles):
-            mounts.append(
-                Mount(MountKind.BIND, str(material.certificate.parent), CERTS_DIR, read_only=True)
-            )
+        match material:
+            case CertificateFiles(directory=directory):
+                mounts.append(Mount(MountKind.BIND, str(directory), CERTS_DIR, read_only=True))
+            case AcmeIssuance(credentials_dir=credentials):
+                mounts.append(
+                    Mount(MountKind.BIND, str(credentials), ACME_CREDENTIALS_DIR, read_only=True)
+                )
+            case Plaintext():
+                pass
         return tuple(mounts)
 
     def _ports(self, material: TlsMaterial) -> tuple[PortBinding, ...]:
@@ -129,8 +139,11 @@ def edge_dynamic_config(domain: str, material: TlsMaterial, upstream: str) -> Co
     return config
 
 
-def _env_files(material: TlsMaterial) -> tuple[PurePosixPath, ...]:
-    return (material.provider_env_file,) if isinstance(material, AcmeIssuance) else ()
+def _credential_files(material: TlsMaterial) -> dict[str, str]:
+    """`<NAME>_FILE` paths for the DNS provider: the values stay in files, never in the env."""
+    if not isinstance(material, AcmeIssuance):
+        return {}
+    return {f"{name}_FILE": str(ACME_CREDENTIALS_DIR / name) for name in material.variables}
 
 
 def _dump(config: Config) -> str:
@@ -144,6 +157,21 @@ class TraefikRouter:
     def network(self) -> str:
         return ROUTES_NETWORK
 
+    def container(self) -> ContainerSpec:
+        return ContainerSpec(
+            name=ROUTER_CONTAINER,
+            image=TRAEFIK_IMAGE,
+            mounts=(Mount(MountKind.BIND, str(DOCKER_SOCKET), DOCKER_SOCKET, read_only=True),),
+            ports=(PortBinding("0.0.0.0", ROUTER_PORT, 80),),
+            networks=(ROUTES_NETWORK,),
+            command=(
+                "--entrypoints.web.address=:80",
+                "--providers.docker=true",
+                "--providers.docker.exposedbydefault=false",
+                f"--providers.docker.network={ROUTES_NETWORK}",
+            ),
+        )
+
     def labels(self, route: Route) -> dict[str, str]:
         key = route.key
         return {
@@ -154,21 +182,3 @@ class TraefikRouter:
             f"traefik.http.routers.{key}.service": key,
             f"traefik.http.services.{key}.loadbalancer.server.port": str(int(route.port)),
         }
-
-    def bootstrap_script(self) -> str:
-        return "\n".join(
-            [
-                f"docker network inspect {ROUTES_NETWORK} >/dev/null 2>&1 \\",
-                f"  || docker network create {ROUTES_NETWORK} >/dev/null",
-                f"if ! docker container inspect {ROUTER_CONTAINER} >/dev/null 2>&1; then",
-                f"  docker run --detach --name {ROUTER_CONTAINER} --restart unless-stopped \\",
-                f"    --network {ROUTES_NETWORK} --publish {ROUTER_PORT}:80 \\",
-                "    --volume /var/run/docker.sock:/var/run/docker.sock:ro \\",
-                f"    {TRAEFIK_IMAGE} \\",
-                "    --entrypoints.web.address=:80 \\",
-                "    --providers.docker=true \\",
-                "    --providers.docker.exposedbydefault=false \\",
-                f"    --providers.docker.network={ROUTES_NETWORK} >/dev/null",
-                "fi",
-            ]
-        )

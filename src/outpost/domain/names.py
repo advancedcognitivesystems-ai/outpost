@@ -14,6 +14,9 @@ _HOSTNAME = re.compile(
     r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
 )
 _COMPOSE_SERVICE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SECRET_LIKE = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
 
 
 def _require_label(value: str, what: str, max_length: int) -> None:
@@ -95,6 +98,11 @@ class Domain:
         if not _HOSTNAME.match(self.value):
             raise InvalidValue(f"domain {self.value!r} must be a lowercase DNS name with a dot")
 
+    @property
+    def is_loopback(self) -> bool:
+        """Names under `localhost` reach this machine in browsers without any DNS record."""
+        return self.value.endswith(".localhost")
+
     def __str__(self) -> str:
         return self.value
 
@@ -125,3 +133,34 @@ class Port:
 
     def __int__(self) -> int:
         return self.value
+
+
+@dataclass(frozen=True)
+class UserName:
+    """A Unix user, safe to place in a Dockerfile or a sudoers rule."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not _USER.match(self.value):
+            raise InvalidValue(f"user name {self.value!r} must be a lowercase Unix user name")
+
+    def __str__(self) -> str:
+        return self.value
+
+
+def variable_name(name: str) -> str:
+    """An environment variable name; returns it unchanged."""
+    if not _VARIABLE.match(name):
+        raise InvalidValue(f"{name!r} is not a valid environment variable name")
+    return name
+
+
+def plain_setting_name(name: str) -> str:
+    """A variable for plain settings; names that look like secrets are refused."""
+    variable_name(name)
+    if _SECRET_LIKE.search(name):
+        raise InvalidValue(
+            f"{name!r} looks like a secret; secrets never go in outpost.yaml (see credentials)"
+        )
+    return name

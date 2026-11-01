@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from outpost.application.worktrees import Worktrees
 from outpost.domain.config import ResolvedConfig
-from outpost.domain.names import WorktreeName
+from outpost.domain.names import ServiceName, WorktreeName
 from outpost.domain.routes import Route, plan_routes
 from outpost.ports.stacks import StackDefinition, StackRunner
 
@@ -42,5 +42,5 @@ class Stacks:
     def running(self) -> tuple[WorktreeName, ...]:
         return self._runner.running()
 
-    def follow_logs(self, name: WorktreeName, service: str | None) -> int:
+    def follow_logs(self, name: WorktreeName, service: ServiceName | None) -> int:
         return self._runner.follow_logs(name, service)

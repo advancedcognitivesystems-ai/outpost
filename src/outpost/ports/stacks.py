@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Protocol
 
-from outpost.domain.names import WorktreeName
+from outpost.domain.names import ServiceName, WorktreeName
 from outpost.domain.routes import Route
 
 
@@ -19,10 +19,18 @@ class StackDefinition:
 
 
 class StackRunner(Protocol):
-    def up(self, stack: StackDefinition) -> None: ...
+    def up(self, stack: StackDefinition) -> None:
+        """Start the stack and remember it, so it starts again when the box starts."""
+        ...
 
-    def down(self, worktree: WorktreeName) -> None: ...
+    def down(self, worktree: WorktreeName) -> None:
+        """Stop the stack and forget it."""
+        ...
 
     def running(self) -> tuple[WorktreeName, ...]: ...
 
-    def follow_logs(self, worktree: WorktreeName, service: str | None) -> int: ...
+    def follow_logs(self, worktree: WorktreeName, service: ServiceName | None) -> int: ...
+
+    def boot_script(self) -> str:
+        """Shell lines the box runs at start to bring back every remembered stack."""
+        ...

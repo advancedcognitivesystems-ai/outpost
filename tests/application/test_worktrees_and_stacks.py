@@ -15,7 +15,7 @@ FEAT = WorktreeName("feat-a")
 def _services(config: ResolvedConfig) -> tuple[Worktrees, Stacks, FakeRepository, FakeStackRunner]:
     repository = FakeRepository(cloned=True)
     runner = FakeStackRunner()
-    worktrees = Worktrees(config, repository, runner)
+    worktrees = Worktrees(repository, runner)
     return worktrees, Stacks(config, runner, worktrees), repository, runner
 
 

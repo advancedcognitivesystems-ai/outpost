@@ -32,8 +32,21 @@ class CredentialSync:
     def tools(self) -> tuple[Tool, ...]:
         return tuple(self._bindings)
 
+    @property
+    def sources_in_use(self) -> tuple[SecretSource, ...]:
+        """The client sources the configured strategies will read."""
+        reading = {Strategy.COPY, Strategy.TOKEN}
+        return tuple(
+            binding.source
+            for binding in self._bindings.values()
+            if binding.spec.strategy in reading
+        )
+
     def state(self, tool: Tool) -> AuthState:
         return self._bindings[tool].box.state()
+
+    def skips(self, tool: Tool) -> bool:
+        return self._bindings[tool].spec.strategy is Strategy.SKIP
 
     def sync(self, only: Tool | None = None) -> tuple[AuthState, ...]:
         return tuple(

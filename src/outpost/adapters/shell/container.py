@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 from outpost.adapters.shell.base import ShellBase
 from outpost.ports.engine import ContainerEngine
 from outpost.ports.shell import CommandResult, Shell
-
-_STAGING = PurePosixPath("/tmp")
 
 
 class ContainerShell(ShellBase):
@@ -31,10 +28,6 @@ class ContainerShell(ShellBase):
         return self._engine.exec_interactive(self._container, argv, user=self._user)
 
     def upload(self, source: Path, target: PurePosixPath) -> None:
-        staged = _STAGING / f"outpost-upload-{uuid.uuid4().hex}"
-        self._host.upload(source, staged)
-        try:
+        with self._host.staged(source) as on_host:
             self.ensure_directory(target.parent)
-            self._engine.copy_into(self._container, staged, target)
-        finally:
-            self._host.run(["rm", "-f", str(staged)])
+            self._engine.copy_into(self._container, on_host, target)

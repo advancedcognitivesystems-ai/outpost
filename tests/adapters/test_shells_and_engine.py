@@ -4,9 +4,10 @@ from pathlib import Path, PurePosixPath
 
 from outpost.adapters.engine.docker_cli import DockerCliEngine, exec_arguments, run_arguments
 from outpost.adapters.shell.local import LocalShell
+from outpost.adapters.shell.process import run_captured
 from outpost.adapters.shell.ssh import SshShell
 from outpost.domain.config import Isolation, SshConnection
-from outpost.domain.names import Port
+from outpost.domain.names import ImageRef, Port
 from outpost.ports.engine import ContainerSpec, ContainerState, Mount, MountKind, PortBinding
 from tests.fakes import FakeShell
 
@@ -18,12 +19,18 @@ def test_ssh_quotes_the_remote_command() -> None:
     assert "BatchMode=yes" in argv
     assert argv[argv.index("-p") + 1] == "2222"
     assert argv[-3:] == ["dev@vm", "--", "sh -c 'echo $HOME' 'it'\"'\"'s'"]
+    assert shell.client_commands == ("ssh", "scp")
 
 
 def test_interactive_ssh_allocates_a_terminal_and_allows_prompts() -> None:
     argv = SshShell(SshConnection(host="vm")).command(["bash", "-l"], interactive=True)
     assert "-t" in argv
     assert "BatchMode=yes" not in argv
+
+
+def test_captured_commands_never_read_the_terminal() -> None:
+    assert run_captured(["cat"]).stdout == ""
+    assert run_captured(["cat"], stdin="given").stdout == "given"
 
 
 def test_local_shell_files_and_working_directory(tmp_path: Path) -> None:
@@ -36,10 +43,18 @@ def test_local_shell_files_and_working_directory(tmp_path: Path) -> None:
     assert shell.run(["pwd"], cwd=PurePosixPath(tmp_path)).stdout.strip() == str(tmp_path)
 
 
+def test_staged_files_are_removed_after_use(tmp_path: Path) -> None:
+    source = tmp_path / "archive.tar"
+    source.write_text("image", encoding="utf-8")
+    with LocalShell().staged(source) as staged:
+        assert Path(staged).read_text(encoding="utf-8") == "image"
+    assert not Path(staged).exists()
+
+
 def test_box_run_arguments_are_stable() -> None:
     spec = ContainerSpec(
         name="outpost-acme-box",
-        image="outpost-acme-box:abc",
+        image=ImageRef("outpost-acme-box:abc"),
         isolation=Isolation.SYSBOX,
         mounts=(Mount(MountKind.VOLUME, "outpost-acme-home", PurePosixPath("/home/dev")),),
         ports=(PortBinding("127.0.0.1", 443, 443),),
@@ -62,9 +77,7 @@ def test_box_run_arguments_are_stable() -> None:
 
 
 def test_exec_arguments() -> None:
-    argv = exec_arguments(
-        "box", ["claude", "auth", "status"], user="dev", workdir=None, keep_stdin=False
-    )
+    argv = exec_arguments("box", ["claude", "auth", "status"], user="dev", keep_stdin=False)
     assert argv == ["exec", "--user", "dev", "box", "claude", "auth", "status"]
 
 

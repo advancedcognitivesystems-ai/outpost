@@ -13,6 +13,10 @@ ACR_SUFFIX = ".azurecr.io"
 
 
 class NoRegistryLogin:
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return ()
+
     def login(self) -> None:
         return None
 
@@ -25,6 +29,10 @@ class DockerRegistryLogin:
         self._registry = registry
         self._username = username
         self._password = password
+
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return self._password.client_commands
 
     def login(self) -> None:
         secret = self._password.read()
@@ -41,6 +49,10 @@ class AzureAcrLogin:
         self._client = client
         self._name = registry.removesuffix(ACR_SUFFIX).split(".")[0]
         self._server = registry if "." in registry else f"{registry}{ACR_SUFFIX}"
+
+    @property
+    def client_commands(self) -> tuple[str, ...]:
+        return ("az",)
 
     def login(self) -> None:
         argv = ["az", "acr", "login", "--name", self._name, "--expose-token"]

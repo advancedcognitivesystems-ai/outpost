@@ -2,7 +2,7 @@ version: 1
 
 project:
   name: acme                                  # prefixes every host object: outpost-acme-*
-  repository: git@github.com:acme/platform.git
+  repository: https://github.com/acme/platform.git   # HTTPS: git in the box goes through gh
   default_branch: main
 
 default_target: azure                         # --target overrides it

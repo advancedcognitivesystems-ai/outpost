@@ -1,9 +1,20 @@
 #!/bin/sh
-# Box entrypoint: starts the inner Docker engine, then the router, then the box's command.
-# Stacks started with `restart: unless-stopped` come back on their own once the engine is up.
+# Box entrypoint: prepares cgroups, starts the inner Docker engine, brings back the stacks that
+# were running, then runs the box's command. The router restarts on its own (restart policy).
 set -eu
 
+# cgroup v2 nesting, as moby's hack/dind does: move this group's processes into a child group,
+# then delegate the controllers, or the inner engine cannot create containers.
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  mkdir -p /sys/fs/cgroup/init
+  xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+  sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+    > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+fi
+
 if ! docker info >/dev/null 2>&1; then
+  # A pid file left by a stopped box would make the engine refuse to start.
+  rm -f /var/run/docker.pid /var/run/docker/containerd/containerd.pid
   dockerd >/var/log/dockerd.log 2>&1 &
   tries=0
   until docker info >/dev/null 2>&1; do
@@ -16,6 +27,8 @@ if ! docker info >/dev/null 2>&1; then
   done
 fi
 
-{{router_bootstrap}}
+(
+{{boot}}
+) &
 
 exec "$@"

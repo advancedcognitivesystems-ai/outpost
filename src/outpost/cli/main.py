@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING
 
 from outpost import __version__
 from outpost.cli import commands
-from outpost.cli.commands import worktree_name
+from outpost.cli.commands import argument
 from outpost.domain.credentials import Tool
 from outpost.domain.errors import ConfigError, Declined, OutpostError
+from outpost.domain.names import ServiceName, WorktreeName
 
 EXIT_FAILURE = 1
 EXIT_CONFIG = 2
@@ -20,6 +21,7 @@ EXIT_DECLINED = 3
 EXIT_INTERRUPTED = 130
 
 Handler = Callable[[argparse.Namespace], int]
+worktree_argument = argument(WorktreeName)
 if TYPE_CHECKING:
     Subcommands = argparse._SubParsersAction[argparse.ArgumentParser]
 
@@ -64,17 +66,19 @@ def build_parser() -> argparse.ArgumentParser:
     destroy.add_argument("--volumes", action="store_true", help="also remove the volumes")
     command("status", commands.status, "edge, box, running stacks and their URLs")
     shell = command("shell", commands.shell, "interactive shell in the box")
-    shell.add_argument("worktree", nargs="?", type=worktree_name)
+    shell.add_argument("worktree", nargs="?", type=worktree_argument)
 
     worktree = command("worktree", None, "manage worktrees")
     worktree_sub = worktree.add_subparsers(dest="action", required=True, metavar="<action>")
     add = command("add", commands.worktree_add, "create a worktree", worktree_sub)
-    add.add_argument("name", type=worktree_name)
+    add.add_argument("name", type=worktree_argument)
     add.add_argument("--branch", help="branch name (default: the worktree name)")
-    add.add_argument("--from", dest="start", help="start point (default: origin/<default_branch>)")
+    add.add_argument(
+        "--from", dest="start", help="start point (default: the default branch on the remote)"
+    )
     command("ls", commands.worktree_ls, "list worktrees", worktree_sub)
     remove = command("rm", commands.worktree_rm, "stop its stack, remove a worktree", worktree_sub)
-    remove.add_argument("name", type=worktree_name)
+    remove.add_argument("name", type=worktree_argument)
     remove.add_argument("--force", action="store_true", help="remove even with local changes")
 
     stack = command("stack", None, "manage stacks")
@@ -84,13 +88,15 @@ def build_parser() -> argparse.ArgumentParser:
         ("down", commands.stack_down, "stop a worktree's stack"),
         ("urls", commands.stack_urls, "print a worktree's URLs"),
     ):
-        command(name, handler, help_text, stack_sub).add_argument("worktree", type=worktree_name)
+        command(name, handler, help_text, stack_sub).add_argument(
+            "worktree", type=worktree_argument
+        )
     command("ls", commands.stack_ls, "list running stacks", stack_sub)
     logs = command("logs", commands.stack_logs, "follow a stack's logs", stack_sub)
-    logs.add_argument("worktree", type=worktree_name)
-    logs.add_argument("service", nargs="?")
+    logs.add_argument("worktree", type=worktree_argument)
+    logs.add_argument("service", nargs="?", type=argument(ServiceName))
     forward = command("forward", commands.stack_forward, "tunnel a non-HTTP port", stack_sub)
-    forward.add_argument("worktree", type=worktree_name)
+    forward.add_argument("worktree", type=worktree_argument)
     forward.add_argument("service")
     forward.add_argument("port", type=int)
 

@@ -10,20 +10,29 @@ from outpost.domain.names import Domain
 
 @dataclass(frozen=True)
 class CertificateFiles:
-    """A wildcard certificate and its key, already on the host."""
+    """A wildcard certificate and its key, alone in their directory on the host."""
 
     certificate: PurePosixPath
     key: PurePosixPath
 
+    @property
+    def directory(self) -> PurePosixPath:
+        return self.certificate.parent
+
 
 @dataclass(frozen=True)
 class AcmeIssuance:
-    """The edge obtains and renews a wildcard certificate itself through DNS-01."""
+    """The edge obtains and renews a wildcard certificate itself through DNS-01.
+
+    Each DNS provider credential is one file in `credentials_dir`, named after its variable,
+    so the edge reads them through `<VARIABLE>_FILE` and never holds them in its environment.
+    """
 
     domain: Domain
     email: str
     dns_provider: str
-    provider_env_file: PurePosixPath
+    credentials_dir: PurePosixPath
+    variables: tuple[str, ...]
 
 
 @dataclass(frozen=True)

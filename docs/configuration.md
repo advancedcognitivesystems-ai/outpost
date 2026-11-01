@@ -2,7 +2,7 @@
 
 One file, `outpost.yaml`, describes the environment. It stays out of git; [`outpost.example.yaml`](../outpost.example.yaml) is its template and shows every key with its accepted values. Shared sections hold the project, the box, the stacks and the credentials; `targets` hold what differs per host, and `--target` or `default_target` picks one.
 
-The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L94-L109) into [`OutpostConfig`](../src/outpost/domain/config.py#L246-L268). Unknown keys are refused, and every error names the exact key at fault.
+The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L102-L117) into [`OutpostConfig`](../src/outpost/domain/config.py#L246-L268). Unknown keys are refused, and every error names the exact key at fault.
 
 ## Reference
 
@@ -10,7 +10,7 @@ The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L94-L109)
 | --- | --- | --- | --- |
 | `version` | `1` | Required | Schema version |
 | `project.name` | Lowercase letters, digits, `-` (30 max) | Required | Prefix of every host object, `outpost-<name>-*` |
-| `project.repository` | Git URL | Required | Cloned into `/workspaces/<name>/repo` on the first `up` |
+| `project.repository` | HTTPS Git URL | Required | Cloned into `/workspaces/<name>/repo` on the first `up`; git authenticates through gh |
 | `project.default_branch` | Branch name | `main` | Base of new worktrees |
 | `default_target` | A key of `targets` | The only target | Used when `--target` is absent |
 | `targets.<t>.connection.kind` | `local`, `ssh` | Required | How the client runs host commands |
@@ -28,7 +28,7 @@ The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L94-L109)
 | `box.image.ref` | Image reference | Required | Base image the box is built on (Debian or Ubuntu based) |
 | `box.image.registry_auth.kind` | `none`, `docker-login`, `azure-acr` | `none` | How the host logs in before pulling; `registry` source only |
 | `box.image.registry_auth.registry`, `username`, `password_env` | | Per kind | ACR name; or registry host, user and the client env var holding the password |
-| `box.user` | Unix user name | `dev` | User inside the box |
+| `box.user` | Lowercase Unix user name | `dev` | User inside the box, owner of `/workspaces` |
 | `box.cpus`, `box.memory_gb` | Numbers | No limit | Resource limits of the box |
 | `box.env` | Map of strings | Empty | Plain settings; names that look like secrets are refused |
 | `stacks.compose_files` | Paths in the worktree | Required | Passed to `docker compose --file`, in order |
@@ -44,12 +44,12 @@ The file is parsed by [`parse_config`](../src/outpost/config/loader.py#L94-L109)
 ## Secrets
 
 - `outpost.yaml` never holds a secret, only where to read one on the client: a file, an environment variable name, the macOS keychain, or a command's output. The readers are built by [`build_secret_source`](../src/outpost/adapters/credentials/factory.py#L25-L44).
-- On the host, Outpost writes secrets only into the box home volume or `<state_dir>/secrets`, with mode 0600.
-- The box must not define `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`: either one takes precedence over the claude.ai login and hides claude.ai connectors. [`ClaudeAuth.state`](../src/outpost/adapters/credentials/claude.py#L34-L47) reports it.
+- On the host, secrets live in three places, all mode 0600: the box home volume (Claude Code and gh logins), `<state_dir>/tls` (the local CA's key; the edge only mounts the `edge` subdirectory with the leaf certificate), and `<state_dir>/secrets/acme-dns` (one file per DNS credential, read by the edge through `<NAME>_FILE`, never through its environment). See [`parse_assignments`](../src/outpost/adapters/tls/acme.py#L53-L66).
+- Claude Code in the box must use the claude.ai login: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` would take precedence and hide claude.ai connectors. [`ClaudeAuth.state`](../src/outpost/adapters/credentials/claude.py#L33-L48) reads `authMethod` from `claude auth status` and reports anything but `claude.ai`.
 
 ## Credential flow
 
-`up` and `creds sync` run the same steps for Claude Code, then GitHub; see [`CredentialSync`](../src/outpost/application/credentials.py#L26-L90).
+`up` and `creds sync` run the same steps for Claude Code, then GitHub; see [`CredentialSync`](../src/outpost/application/credentials.py#L26-L103).
 
 1. Check in the box with the tool itself. Valid means nothing to do.
 2. `copy`: read the client source; found means install it in the box, then check again.

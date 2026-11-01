@@ -1,4 +1,4 @@
-"""Facts about a host, read with POSIX commands through its shell."""
+"""Facts about the host, read with POSIX commands through its shell, local or remote."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ _EXISTING_PARENT = (
 _KB_PER_GB = 1024**2
 
 
-class RemoteProbe:
+class ShellProbe:
     def __init__(self, shell: Shell) -> None:
         self._shell = shell
         self._home: str | None = None

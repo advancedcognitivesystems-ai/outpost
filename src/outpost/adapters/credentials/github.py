@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from outpost.adapters.shell.process import COMMAND_NOT_FOUND
 from outpost.domain.credentials import AuthState, Tool
 from outpost.domain.errors import CommandFailed
 from outpost.domain.secrets import Secret
@@ -23,7 +22,7 @@ class GithubAuth:
 
     def state(self) -> AuthState:
         result = self._shell.run(["gh", "auth", "status", "--hostname", HOSTNAME])
-        if result.code == COMMAND_NOT_FOUND:
+        if result.missing_command:
             return AuthState(Tool.GITHUB, False, "gh is not installed")
         text = (result.stdout + result.stderr).strip()
         return AuthState(Tool.GITHUB, result.ok, text.splitlines()[0] if text else "")
