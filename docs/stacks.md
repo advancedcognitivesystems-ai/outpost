@@ -6,10 +6,16 @@ A stack is anything started on the inner Docker; it becomes reachable from your 
 
 1. Start the stack on the inner Docker, such as `docker compose -p feat-a up -d` in a worktree.
 2. Register what you want to open: `outpost route add api.feat-a feat-a-api-1:8080`.
-3. [`Routes.add`](../src/outpost/container/application/routes.py#L28-L34) attaches the container to the `outpost` network when needed, then adds the route through the proxy's API.
+3. [`Routes.add`](../src/outpost/container/application/routes.py#L36-L43) attaches the container to the `outpost` network when needed, and says so, then adds the route through the proxy's API.
 4. `https://api.feat-a.dev.localhost:8443` answers at once, with a certificate from the proxy's CA.
 
-A route answers 502 until its upstream listens. Routes survive restarts of the proxy and of the dev container.
+A route answers 502 until its upstream listens. A name without a route fails at the TLS handshake, as `ERR_SSL_PROTOCOL_ERROR` in Chrome or error 35 in curl, because the proxy has no certificate for it: check `outpost route ls`.
+
+## Restarts
+
+- Routes and the CA survive restarts of the proxy and of the dev container, and recreations.
+- Stacks come back after a restart of the dev container or the host only with a restart policy, such as `restart: unless-stopped` in compose. Processes run directly in the dev container do not come back: start them again, or from an init script.
+- A proxy stopped or removed, as by `docker rm -f $(docker ps -aq)`, comes back with its routes through `sudo outpost proxy start`, `./outpost up`, or the next start of the dev container.
 
 ## Upstreams
 
@@ -19,7 +25,7 @@ A route answers 502 until its upstream listens. Routes survive restarts of the p
 | `alias:port` | A network alias on the `outpost` network | For compose services that join it |
 | `devcontainer:port` | A process run directly in the dev container | It must listen on `0.0.0.0` |
 
-Upstreams speak HTTP; TLS ends at the proxy. Upstreams are parsed by [`Upstream.parse`](../src/outpost/domain/routes.py#L32-L38).
+Upstreams speak HTTP, WebSockets included; TLS ends at the proxy, which speaks HTTP/2 and HTTP/1.1 to the browser. Upstreams are parsed by [`Upstream.parse`](../src/outpost/domain/routes.py#L32-L38).
 
 ## Compose pattern
 
@@ -27,6 +33,7 @@ Upstreams speak HTTP; TLS ends at the proxy. Upstreams are parsed by [`Upstream.
 # compose.override.yaml in the worktree
 services:
   api:
+    restart: unless-stopped
     networks: [default, outpost]
 networks:
   outpost:
@@ -36,7 +43,7 @@ networks:
 ## Names
 
 - A route name is one or more DNS labels, such as `api.feat-a`, checked by [`DnsName`](../src/outpost/domain/names.py#L39-L56).
-- `<service>.<worktree>` scales: `outpost route rm '*.feat-a'` removes a worktree's routes, through [`Routes.remove`](../src/outpost/container/application/routes.py#L36-L47).
+- `<service>.<worktree>` scales: `outpost route rm '*.feat-a'` removes a worktree's routes, through [`Routes.remove`](../src/outpost/container/application/routes.py#L45-L56).
 
 ## Tools and init scripts
 

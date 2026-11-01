@@ -25,7 +25,7 @@ your machine                         host (local Docker, or a Linux VM over SSH)
 5. Compares the settings digest on the existing container with the new one, and asks before recreating; a recreation stops the container first, so its stacks stop cleanly.
 6. Runs `devcontainer up` with the file [`define`](../src/outpost/domain/devcontainer.py#L231-L254) builds, through [`DevContainerCliAdapter`](../src/outpost/launcher/adapters/devcontainer_cli.py#L16-L55).
 7. Checks what the container actually exposes, since features and image metadata can add mounts: a bind mount, the host's network or another published port removes it again, by [`exposure_problems`](../src/outpost/domain/exposure.py#L42-L53).
-8. Waits until the boot record says ready for this start of the container.
+8. Waits until the boot record says ready for this start of the container, then starts the proxy again with its routes if it was stopped or removed since.
 9. Checks and copies the logins, with [`Logins`](../src/outpost/launcher/application/logins.py#L13-L60).
 10. Copies the `copy` entries, replaces the init scripts, and runs them if they changed, with their output on your terminal.
 
@@ -34,7 +34,7 @@ your machine                         host (local Docker, or a Linux VM over SSH)
 The image's entrypoint, `image/entrypoint.sh`, runs whoever starts the container: `./outpost up`, `docker start`, or Docker after a reboot through `--restart unless-stopped`.
 
 1. It prepares cgroup v2 nesting and starts the inner Docker engine, which logs to `/var/log/outpost/dockerd.log`.
-2. `outpost boot` runs [`Boot.run`](../src/outpost/container/application/boot.py#L54-L75): the `outpost` network and the proxy through [`CaddyContainer`](../src/outpost/container/adapters/proxy_container.py#L30-L132), every route applied again (so a changed domain takes effect), new persisted volumes handed to `dev`, then the init scripts. Whatever fails, boot ends by writing a ready record named after this start.
+2. `outpost boot` runs [`Boot.run`](../src/outpost/container/application/boot.py#L70-L91): [`ProxyStartup`](../src/outpost/container/application/boot.py#L36-L51) creates the `outpost` network and the proxy through [`CaddyContainer`](../src/outpost/container/adapters/proxy_container.py#L30-L132) and applies every route again (so a changed domain takes effect), new persisted volumes are handed to `dev`, then the init scripts run. Whatever fails, boot ends by writing a ready record named after this start.
 3. The container lives as long as the inner engine. Stopping it stops the inner engine first, which stops the stacks cleanly within the container's 60-second stop timeout.
 
 ## Proxy and certificates

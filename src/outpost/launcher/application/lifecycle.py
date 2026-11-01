@@ -67,13 +67,15 @@ class Lifecycle:
         container = self._env.container
         info = self._docker.container(container)
         running = info.state is ContainerState.RUNNING
+        runtime = self._runtime.status(container) if running else None
+        serving = runtime is not None and runtime.proxy_running
         return EnvironmentStatus(
             container=container,
             state=info.state,
             detail=info.status,
             volumes=self._docker.volumes(self._env.labels),
-            runtime=self._runtime.status(container) if running else None,
-            routes=self._runtime.routes(container) if running else "",
+            runtime=runtime,
+            routes=self._runtime.routes(container) if serving else "",
         )
 
     def _remove(self) -> None:

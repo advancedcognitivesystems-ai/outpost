@@ -18,6 +18,10 @@ class ContainerRuntime(Protocol):
         """The route listing, as `outpost route ls` prints it."""
         ...
 
+    def start_proxy(self, container: str) -> ContainerStatus:
+        """Start the proxy, or create it again, with its routes."""
+        ...
+
     def run_init(self, container: str) -> ContainerStatus:
         """Run the init scripts if they changed since they last ran, showing their output."""
         ...

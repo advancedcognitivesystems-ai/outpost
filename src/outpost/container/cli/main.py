@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from outpost import __version__
 from outpost.container.cli.wiring import InContainer
 from outpost.domain.errors import InvalidValue, OutpostError
+from outpost.domain.layout import NETWORK
 from outpost.domain.names import DnsName
 from outpost.domain.routes import Upstream
 from outpost.domain.status import INIT_SCRIPTS_FAILED
@@ -25,7 +26,15 @@ if TYPE_CHECKING:
 
 
 def route_add(tool: InContainer, args: argparse.Namespace) -> int:
-    print(tool.routes().add(DnsName(args.name), Upstream.parse(args.upstream)))
+    added = tool.routes().add(DnsName(args.name), Upstream.parse(args.upstream))
+    print(added.url)
+    if added.attached:
+        print(
+            f"outpost: attached {added.attached} to the `{NETWORK}` network; a container created "
+            "again, as a compose change does, leaves it: add the route again, or declare the "
+            "network in your compose file",
+            file=sys.stderr,
+        )
     return EXIT_OK
 
 
@@ -69,6 +78,12 @@ def status(tool: InContainer, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def proxy_start(tool: InContainer, args: argparse.Namespace) -> int:
+    count = tool.proxy_startup().run()
+    print(f"proxy running with {count} routes")
+    return EXIT_OK
+
+
 def boot(tool: InContainer, args: argparse.Namespace) -> int:
     record = tool.boot().run()
     print(f"outpost: ready ({len(record.init_failed)} init scripts failed)", file=sys.stderr)
@@ -106,6 +121,9 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("names", nargs="+", metavar="name")
     ls = command(routes, "ls", route_ls, "list routes with their URLs")
     ls.add_argument("--json", action="store_true")
+    proxy = sub.add_parser("proxy", help="the proxy's container", description="the proxy")
+    proxies = proxy.add_subparsers(dest="action", required=True, metavar="<action>")
+    command(proxies, "start", proxy_start, "start the proxy, or create it again, with its routes")
     command(sub, "ca", ca, "print the proxy's root certificate")
     state = command(sub, "status", status, "boot, proxy and init state")
     state.add_argument("--json", action="store_true")
@@ -124,7 +142,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"outpost: {error}", file=sys.stderr)
         return EXIT_USAGE
     except PermissionError as error:
-        print(f"outpost: {error}; `boot` and `init` run as root", file=sys.stderr)
+        print(
+            f"outpost: {error}; `boot`, `init` and `proxy start` run as root, with sudo",
+            file=sys.stderr,
+        )
         return EXIT_FAILURE
     except (OutpostError, OSError) as error:
         print(f"outpost: {error}", file=sys.stderr)

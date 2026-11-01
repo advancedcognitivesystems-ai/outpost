@@ -20,6 +20,7 @@ def test_every_command_is_reachable() -> None:
         ["route", "add", "api.feat-a", "feat-a-api-1:8080"],
         ["route", "rm", "*.feat-a"],
         ["route", "ls", "--json"],
+        ["proxy", "start"],
         ["ca"],
         ["status", "--json"],
         ["boot"],

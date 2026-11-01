@@ -14,7 +14,7 @@ from outpost.container.adapters.init_files import (
     ScriptDirectories,
 )
 from outpost.container.adapters.proxy_container import CaddyContainer
-from outpost.container.application.boot import Boot, Init, Status
+from outpost.container.application.boot import Boot, Init, ProxyStartup, Status
 from outpost.container.application.routes import Routes
 from outpost.domain.layout import DEFAULT_DOMAIN, DEFAULT_PORT, ENV_DOMAIN, ENV_PERSIST, ENV_PORT
 from outpost.domain.names import DnsName, port_number
@@ -50,10 +50,12 @@ class InContainer:
     def routes(self) -> Routes:
         return Routes(self.site, self._proxy, DockerEngine(self._runner))
 
+    def proxy_startup(self) -> ProxyStartup:
+        return ProxyStartup(CaddyContainer(self._runner), self._proxy)
+
     def boot(self) -> Boot:
         return Boot(
-            runtime=CaddyContainer(self._runner),
-            proxy=self._proxy,
+            proxy=self.proxy_startup(),
             init=self._init,
             store=self._store,
             ownership=DirectoryOwnership(),

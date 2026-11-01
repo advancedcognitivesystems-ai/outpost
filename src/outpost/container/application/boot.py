@@ -33,18 +33,34 @@ class Init:
         return record
 
 
+class ProxyStartup:
+    def __init__(self, runtime: ProxyRuntime, proxy: Proxy) -> None:
+        self._runtime = runtime
+        self._proxy = proxy
+
+    def run(self) -> int:
+        """Create or start the proxy, then apply every saved route again; returns their count.
+
+        Applying them again rewrites their names when the domain changed.
+        """
+        self._runtime.ensure_running()
+        self._proxy.wait_ready(PROXY_TIMEOUT)
+        routes = self._proxy.routes()
+        for route in routes:
+            self._proxy.put(route)
+        return len(routes)
+
+
 class Boot:
     def __init__(
         self,
         *,
-        runtime: ProxyRuntime,
-        proxy: Proxy,
+        proxy: ProxyStartup,
         init: Init,
         store: BootStore,
         ownership: Ownership,
         persisted: Sequence[PurePosixPath],
     ) -> None:
-        self._runtime = runtime
         self._proxy = proxy
         self._init = init
         self._store = store
@@ -61,7 +77,7 @@ class Boot:
         self._store.write(replace(self._store.read(), ready=False, boot_id=boot))
         problem: OutpostError | None = None
         try:
-            self._start_proxy()
+            self._proxy.run()
         except Exception as error:  # any failure here must not keep the container from booting
             problem = error if isinstance(error, OutpostError) else Unavailable(str(error))
         try:
@@ -73,12 +89,6 @@ class Boot:
         if problem is not None:
             raise problem
         return self._store.read()
-
-    def _start_proxy(self) -> None:
-        self._runtime.ensure_running()
-        self._proxy.wait_ready(PROXY_TIMEOUT)
-        for route in self._proxy.routes():
-            self._proxy.put(route)
 
 
 class Status:

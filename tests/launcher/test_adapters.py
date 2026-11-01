@@ -245,6 +245,15 @@ def test_an_image_without_the_tool_is_named() -> None:
         ToolRuntime(docker(runner)).status("outpost-main")
 
 
+def test_the_proxy_is_started_as_root_then_the_status_read() -> None:
+    runner = FakeRunner()
+    runner.answer(["docker", "exec"], ok(ContainerStatus(True, True, 3).to_json()))
+    assert ToolRuntime(docker(runner)).start_proxy("outpost-main").proxy_running
+    started = runner.calls[0].argv
+    assert started[started.index("--user") + 1] == "root"
+    assert started[-3:] == ("outpost", "proxy", "start")
+
+
 def test_init_runs_as_root_on_the_terminal_and_failed_scripts_are_reported() -> None:
     runner = FakeRunner()
     failed_status = ContainerStatus(True, True, 0, init_failed=("01-a.sh",))

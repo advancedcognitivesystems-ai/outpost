@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath, PurePosixPath
 from typing import IO
 
@@ -254,10 +254,13 @@ class FakeDevContainer:
 
 
 class FakeRuntime:
-    def __init__(self, events: Events, status: ContainerStatus | None = None) -> None:
+    def __init__(
+        self, events: Events, status: ContainerStatus | None = None, *, proxy_starts: bool = True
+    ) -> None:
         self.events = events
         self.current = status or ContainerStatus(ready=True, proxy_running=True, routes=0)
         self.certificate = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
+        self.proxy_starts = proxy_starts
 
     def wait_ready(self, container: str, timeout: float) -> ContainerStatus:
         self.events.append("wait ready")
@@ -267,7 +270,16 @@ class FakeRuntime:
         return self.current
 
     def routes(self, container: str) -> str:
+        if not self.current.proxy_running:
+            raise Unavailable("the proxy's API does not answer")
         return "https://api.feat-a.dev.localhost:8443  ->  feat-a-api-1:8080\n"
+
+    def start_proxy(self, container: str) -> ContainerStatus:
+        self.events.append("start proxy")
+        if not self.proxy_starts:
+            raise Unavailable("caddy:2.11 cannot be pulled")
+        self.current = replace(self.current, proxy_running=True)
+        return self.current
 
     def run_init(self, container: str) -> ContainerStatus:
         self.events.append("run init")

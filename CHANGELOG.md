@@ -4,9 +4,15 @@ All notable changes to Outpost. The format follows [Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Added
+
+- `outpost proxy start` starts the proxy, or creates it again, with its routes; `./outpost up` does it when the proxy was stopped or removed since the container started.
+- `outpost route add` says when it attached a container to the `outpost` network, since a container created again leaves it.
+
 ### Fixed
 
 - A login your machine has but the container refuses is reported, and a login is offered, instead of stopping `up`.
+- `./outpost status` reports a proxy that is not running instead of failing.
 
 ## [0.2.0] - 2026-11-01
 

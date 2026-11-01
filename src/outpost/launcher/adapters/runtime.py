@@ -48,6 +48,10 @@ class ToolRuntime:
     def routes(self, container: str) -> str:
         return self._tool(container, ["route", "ls"]).check().stdout
 
+    def start_proxy(self, container: str) -> ContainerStatus:
+        self._tool(container, ["proxy", "start"], user=ROOT_USER).check()
+        return self.status(container)
+
     def run_init(self, container: str) -> ContainerStatus:
         argv = [TOOL, "init", "--if-changed"]
         code = self._docker.exec_attached(

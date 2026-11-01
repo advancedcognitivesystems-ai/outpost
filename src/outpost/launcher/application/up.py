@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from outpost.domain.credentials import LoginState
 from outpost.domain.devcontainer import DevContainerDefinition
 from outpost.domain.environment import Environment
-from outpost.domain.errors import ConfigError
+from outpost.domain.errors import ConfigError, OutpostError
 from outpost.domain.exposure import exposure_problems
 from outpost.domain.names import DnsName
 from outpost.domain.status import ContainerStatus
@@ -75,7 +75,7 @@ class Up:
         self._refuse_exposure()
         booted = self._runtime.wait_ready(self._env.container, READY_TIMEOUT)
         if not booted.proxy_running:
-            self._console.warn("the proxy is not running; see `./outpost logs`")
+            self._start_proxy()
         logins = self._logins.ensure_all()
         for item in self._env.copies:
             self._transfers.copy_to(item.source, item.target)
@@ -103,6 +103,17 @@ class Up:
         ):
             self._console.info(f"copying {image} from {mine.description} to the host")
             mine.send(image)
+
+    def _start_proxy(self) -> None:
+        """A proxy stopped or removed since the container started is started again."""
+        self._console.info("the proxy is not running; starting it with its routes")
+        try:
+            started = self._runtime.start_proxy(self._env.container).proxy_running
+        except OutpostError as error:
+            self._console.warn(f"the proxy did not start: {error}")
+            return
+        if not started:
+            self._console.warn("the proxy did not start; see `./outpost logs`")
 
     def _refuse_exposure(self) -> None:
         """Features and image metadata may add mounts: refuse the container if they did."""

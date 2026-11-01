@@ -11,6 +11,7 @@ from outpost.domain.environment import Environment
 from outpost.domain.errors import Declined, Unavailable
 from outpost.domain.host import SshHost
 from outpost.domain.secrets import Secret
+from outpost.domain.status import ContainerStatus
 from outpost.domain.transfer import parse_copy
 from outpost.launcher.application.access import Access
 from outpost.launcher.application.doctor import Doctor, Severity
@@ -135,7 +136,9 @@ def test_init_scripts_are_replaced_and_numbered() -> None:
 # ------------------------------------------------------------------ lifecycle
 
 
-def lifecycle(state: ContainerState, *, text: str = "") -> tuple[Lifecycle, FakeDocker]:
+def lifecycle(
+    state: ContainerState, *, text: str = "", runtime: ContainerStatus | None = None
+) -> tuple[Lifecycle, FakeDocker]:
     events: Events = []
     docker = FakeDocker(events)
     if state is not ContainerState.MISSING:
@@ -145,7 +148,7 @@ def lifecycle(state: ContainerState, *, text: str = "") -> tuple[Lifecycle, Fake
         "outpost-main-state": {"outpost.environment": "main"},
         "outpost-other-home": {"outpost.environment": "other"},
     }
-    return Lifecycle(ENV, docker, FakeRuntime(events), FakeConsole(text=text)), docker
+    return Lifecycle(ENV, docker, FakeRuntime(events, runtime), FakeConsole(text=text)), docker
 
 
 def test_stop_and_down_keep_the_volumes() -> None:
@@ -182,6 +185,13 @@ def test_status_asks_the_container_only_when_it_runs() -> None:
     report = running.status()
     assert report.runtime is not None
     assert "feat-a-api-1:8080" in report.routes
+
+
+def test_status_reports_a_stopped_proxy_instead_of_failing() -> None:
+    down = ContainerStatus(ready=True, proxy_running=False, routes=0)
+    report = lifecycle(ContainerState.RUNNING, runtime=down)[0].status()
+    assert report.runtime == down
+    assert report.routes == ""
 
 
 # ------------------------------------------------------------------ access

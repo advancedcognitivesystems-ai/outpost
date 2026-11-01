@@ -67,4 +67,4 @@ Registry logins stay on your machine: after `az acr login --name <registry>` or 
 
 ## Names in the browser
 
-Chrome and Firefox resolve every `*.localhost` name to your machine. Safari and most command-line tools do not: add hosts entries, or set `domain` to a name whose DNS answers `127.0.0.1` for every subdomain.
+Chrome, Firefox and curl resolve every `*.localhost` name to your machine. Safari, and programs that ask the system's resolver, such as Python's, may not: add hosts entries, or set `domain` to a name whose DNS answers `127.0.0.1` for every subdomain.

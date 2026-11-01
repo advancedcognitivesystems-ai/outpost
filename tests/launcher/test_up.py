@@ -42,6 +42,7 @@ class World:
         *,
         answers: tuple[bool, ...] = (),
         status: ContainerStatus | None = None,
+        proxy_starts: bool = True,
     ) -> None:
         self.events: Events = []
         self.env = env or Environment(root=ROOT)
@@ -58,7 +59,7 @@ class World:
             docker=self.docker,
             images_from_you=self.mine if isinstance(self.env.host, SshHost) else None,
             devcontainer=self.devcontainer,
-            runtime=FakeRuntime(self.events, status),
+            runtime=FakeRuntime(self.events, status, proxy_starts=proxy_starts),
             base_image=self.base,
             console=self.console,
             logins=Logins(self.console, [(FakeSource(), self.login)]),
@@ -156,12 +157,20 @@ def test_a_local_only_image_is_streamed_to_a_remote_host() -> None:
     assert not any(event.startswith("build") for event in world.events)
 
 
+def test_a_proxy_stopped_or_removed_since_the_start_is_started_again() -> None:
+    world = World(status=ContainerStatus(ready=True, proxy_running=False, routes=0))
+    assert world.up.run().status.proxy_running
+    assert world.events.index("wait ready") < world.events.index("start proxy")
+    assert world.events.index("start proxy") < world.events.index("run init")
+    assert world.console.warnings == []
+
+
 def test_failures_after_boot_are_reported_not_fatal() -> None:
     status = ContainerStatus(ready=True, proxy_running=False, routes=0, init_failed=("01-a.sh",))
-    world = World(status=status)
+    world = World(status=status, proxy_starts=False)
     report = world.up.run()
     assert report.status.init_failed == ("01-a.sh",)
-    assert any("proxy is not running" in warning for warning in world.console.warnings)
+    assert "the proxy did not start: caddy:2.11 cannot be pulled" in world.console.warnings
     assert any("01-a.sh" in warning for warning in world.console.warnings)
 
 

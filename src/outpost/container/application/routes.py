@@ -14,6 +14,14 @@ from outpost.domain.routes import Route, Site, Upstream, matches
 
 
 @dataclass(frozen=True)
+class AddedRoute:
+    url: str
+    attached: str | None
+    """The container this call attached to the proxy's network; it leaves the network when
+    it is created again, as a compose change does."""
+
+
+@dataclass(frozen=True)
 class ListedRoute:
     route: Route
     url: str
@@ -25,13 +33,14 @@ class Routes:
         self._proxy = proxy
         self._engine = engine
 
-    def add(self, name: DnsName, upstream: Upstream) -> str:
+    def add(self, name: DnsName, upstream: Upstream) -> AddedRoute:
         """Serve `name` from `upstream`, attaching the upstream container to the proxy's network."""
         container = not upstream.is_devcontainer and self._engine.is_container(upstream.host)
-        if container and NETWORK not in self._engine.networks(upstream.host):
+        attached = container and NETWORK not in self._engine.networks(upstream.host)
+        if attached:
             self._engine.connect(NETWORK, upstream.host)
         self._proxy.put(Route(name, upstream))
-        return self._site.url(name)
+        return AddedRoute(self._site.url(name), upstream.host if attached else None)
 
     def remove(self, patterns: Sequence[str]) -> tuple[DnsName, ...]:
         """Remove every route matching one of the patterns, such as `*.feat-a`."""

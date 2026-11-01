@@ -6,7 +6,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from outpost.container.application.boot import Boot, Init, Status
+from outpost.container.application.boot import Boot, Init, ProxyStartup, Status
 from outpost.container.application.routes import Routes
 from outpost.domain.errors import Unavailable
 from outpost.domain.init import Script
@@ -35,9 +35,10 @@ def routes(events: Events, containers: dict[str, list[str]]) -> tuple[Routes, Fa
 def test_a_container_upstream_joins_the_proxy_network_once() -> None:
     events: Events = []
     service, proxy = routes(events, {"feat-a-api-1": ["feat-a_default"]})
-    url = service.add(DnsName("api.feat-a"), Upstream.parse("feat-a-api-1:8080"))
-    service.add(DnsName("api.feat-a"), Upstream.parse("feat-a-api-1:8081"))
-    assert url == "https://api.feat-a.dev.localhost:8443"
+    first = service.add(DnsName("api.feat-a"), Upstream.parse("feat-a-api-1:8080"))
+    again = service.add(DnsName("api.feat-a"), Upstream.parse("feat-a-api-1:8081"))
+    assert first.url == "https://api.feat-a.dev.localhost:8443"
+    assert (first.attached, again.attached) == ("feat-a-api-1", None)
     assert events == [
         "connect feat-a-api-1 to outpost",
         "put api.feat-a feat-a-api-1:8080",
@@ -48,10 +49,11 @@ def test_a_container_upstream_joins_the_proxy_network_once() -> None:
 
 def test_other_upstreams_are_left_to_the_proxy() -> None:
     events: Events = []
-    service, _ = routes(events, {})
-    service.add(DnsName("web"), Upstream.parse("devcontainer:3000"))
-    service.add(DnsName("api"), Upstream.parse("api-alias:80"))
+    service, _ = routes(events, {"devcontainer": []})
+    web = service.add(DnsName("web"), Upstream.parse("devcontainer:3000"))
+    api = service.add(DnsName("api"), Upstream.parse("api-alias:80"))
     assert events == ["put web devcontainer:3000", "put api api-alias:80"]
+    assert (web.attached, api.attached) == (None, None)
 
 
 def test_routes_are_removed_by_pattern() -> None:
@@ -75,8 +77,7 @@ def scripts(events: Events, codes: dict[str, int] | None = None) -> FakeScripts:
 
 def boot(events: Events, store: FakeStore, proxy: FakeProxy | None = None) -> Boot:
     return Boot(
-        runtime=FakeProxyRuntime(events),
-        proxy=proxy or FakeProxy(events),
+        proxy=ProxyStartup(FakeProxyRuntime(events), proxy or FakeProxy(events)),
         init=Init(scripts(events), store),
         store=store,
         ownership=FakeOwnership(events),
@@ -103,6 +104,14 @@ def test_boot_starts_the_proxy_reapplies_routes_then_inits_then_is_ready() -> No
     assert record.init_digest != "old"
 
 
+def test_the_proxy_starts_alone_with_its_routes() -> None:
+    events: Events = []
+    proxy = FakeProxy(events)
+    proxy.table[API.name.value] = API
+    assert ProxyStartup(FakeProxyRuntime(events), proxy).run() == 1
+    assert events == ["proxy running", "proxy ready", "put api.feat-a feat-a-api-1:8080"]
+
+
 def test_a_proxy_that_does_not_start_still_lets_boot_finish() -> None:
     events: Events = []
     proxy = FakeProxy(events)
@@ -118,8 +127,7 @@ def test_boot_ends_ready_even_when_init_breaks() -> None:
     events: Events = []
     store = FakeStore()
     broken = Boot(
-        runtime=FakeProxyRuntime(events),
-        proxy=FakeProxy(events),
+        proxy=ProxyStartup(FakeProxyRuntime(events), FakeProxy(events)),
         init=Init(BrokenScripts(), store),
         store=store,
         ownership=FakeOwnership(events),
