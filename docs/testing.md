@@ -30,7 +30,7 @@ Use cases are tested through in-memory fakes of their ports; adapters are tested
 
 ## Not covered yet
 
-No automated test talks to a real Docker engine, SSH host, registry or Caddy. Before calling a version done, run this by hand on a local host and on a remote VM:
+No automated test talks to a real Docker engine, SSH host, registry or Caddy. Before a [release](../CONTRIBUTING.md#releases), run this by hand on a local host and on a remote VM:
 
 1. `./outpost doctor`, then `./outpost up` from nothing, then `./outpost up` again: nothing changes.
 2. `./outpost shell`; `claude` is logged in with the claude.ai login and lists your claude.ai connectors; `gh auth status` succeeds.

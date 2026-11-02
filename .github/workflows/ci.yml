@@ -4,13 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   checks:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      # setup-uv publishes no major tags since v8: pin the full version.
+      - uses: astral-sh/setup-uv@v10.3.2
       - name: Install dependencies from the lock file
         run: uv sync --locked
       - name: Run every pre-commit hook (format, lint, types, import contracts, tests)

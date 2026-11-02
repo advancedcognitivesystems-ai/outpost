@@ -8,7 +8,6 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
-from outpost import __version__
 from outpost.container.cli.wiring import InContainer
 from outpost.domain.errors import InvalidValue, OutpostError
 from outpost.domain.layout import NETWORK
@@ -102,7 +101,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="outpost", description="Outpost inside the dev container: routes, certificate, status."
     )
-    parser.add_argument("--version", action="version", version=f"outpost {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     def command(

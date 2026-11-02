@@ -2,6 +2,10 @@
 
 A host needs only Docker. Your machine needs the Docker CLI, uv and the Dev Container CLI, plus OpenSSH for a remote host; `./outpost doctor` checks them all.
 
+## Get Outpost
+
+Clone the repository, then check out the latest release from the [releases page](https://github.com/advancedcognitivesystems-ai/outpost/releases): `git clone https://github.com/advancedcognitivesystems-ai/outpost.git && cd outpost && git checkout vX.Y.Z`. `main` holds the next version. To move to another release, check out its tag and run `./outpost up`: the image is rebuilt only when its sources changed, and `up` asks before recreating the container.
+
 ## On your machine
 
 | Tool | Why | Check |

@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from importlib import metadata
 from pathlib import Path
 
-from outpost import __version__
 from outpost.domain.errors import ConfigError, Declined, InvalidValue, OutpostError
 from outpost.launcher.cli import commands
 from outpost.launcher.cli.wiring import Launcher, Options
@@ -24,7 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="outpost", description="Run and reach your Outpost dev container."
     )
-    parser.add_argument("--version", action="version", version=f"outpost {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"outpost {metadata.version('outpost')}"
+    )
     parser.add_argument(
         "--config", type=Path, help="outpost.yaml to use (default: ./outpost.yaml if present)"
     )

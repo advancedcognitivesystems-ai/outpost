@@ -11,7 +11,7 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 ## Working setup
 
 - Python and the tools come from uv; the development tools are listed at [`dependency-groups`](pyproject.toml#L13-L21).
-- The checks are the hooks in [`repo: local`](.pre-commit-config.yaml#L14-L43): format, lint, strict types, import contracts, tests. CI runs exactly these hooks, see [`checks`](.github/workflows/ci.yml#L9-L17).
+- The checks are the hooks in [`repo: local`](.pre-commit-config.yaml#L14-L43): format, lint, strict types, import contracts, tests. CI runs exactly these hooks, see [`checks`](.github/workflows/ci.yml#L13-L22), and so does the release workflow before publishing.
 - Commands, fakes and the manual checklist are in [docs/testing.md](docs/testing.md).
 
 ## Where a change goes
@@ -22,8 +22,8 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 | Change what devcontainer.json Outpost writes | [`define`](src/outpost/domain/devcontainer.py#L231-L254) and the owned keys in [`OWNED_KEYS`](src/outpost/domain/devcontainer.py#L46-L60) | Its tests in `tests/domain/test_devcontainer.py`; the doc table in [docs/configuration.md](docs/configuration.md) |
 | Change what a running container may expose | [`exposure_problems`](src/outpost/domain/exposure.py#L42-L53) | It runs after `devcontainer up`, in [`Up.run`](src/outpost/launcher/application/up.py#L65-L86) |
 | Change a step of `./outpost up` | [`Up.run`](src/outpost/launcher/application/up.py#L65-L86) | The order test [`test_a_first_up_builds_then_creates_then_logs_in_then_inits`](tests/launcher/test_up.py#L70-L94) |
-| Add a launcher command | The parser in [`build_parser`](src/outpost/launcher/cli/main.py#L23-L60) | A handler in `src/outpost/launcher/cli/commands.py`, a use case in `src/outpost/launcher/application/`, its adapters from [`Launcher`](src/outpost/launcher/cli/wiring.py#L51-L147) |
-| Add an in-container command | The parser in [`build_parser`](src/outpost/container/cli/main.py#L101-L133) | A use case in `src/outpost/container/application/`, its adapters from [`InContainer`](src/outpost/container/cli/wiring.py#L27-L77) |
+| Add a launcher command | The parser in [`build_parser`](src/outpost/launcher/cli/main.py#L23-L62) | A handler in `src/outpost/launcher/cli/commands.py`, a use case in `src/outpost/launcher/application/`, its adapters from [`Launcher`](src/outpost/launcher/cli/wiring.py#L51-L147) |
+| Add an in-container command | The parser in [`build_parser`](src/outpost/container/cli/main.py#L100-L131) | A use case in `src/outpost/container/application/`, its adapters from [`InContainer`](src/outpost/container/cli/wiring.py#L27-L77) |
 | Change how routes reach the proxy | [`Routes.add`](src/outpost/container/application/routes.py#L36-L43) | The Caddy objects in [`caddy_route`](src/outpost/container/adapters/caddy.py#L36-L42); the stand-in API in `tests/container/test_adapters.py` |
 | Change the proxy itself | `image/caddy.json` and [`CaddyContainer`](src/outpost/container/adapters/proxy_container.py#L30-L139) | A changed config recreates the proxy and carries routes over in [`CaddyContainer._carry_routes_over`](src/outpost/container/adapters/proxy_container.py#L81-L98) |
 | Change what the image contains | `image/Dockerfile` | Paths it shares with the code live in [domain/layout.py](src/outpost/domain/layout.py), checked by `tests/image/test_image.py` |
@@ -59,3 +59,16 @@ This guide points to files and line ranges instead of repeating code. Every `[sy
 - Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
 - User-visible changes get a line under Unreleased in [CHANGELOG.md](CHANGELOG.md).
 - `outpost.yaml` and `.outpost/` stay out of git; `outpost.example.yaml` is versioned and must keep loading, see [`test_the_example_loads`](tests/launcher/test_config.py#L35-L41).
+
+## Releases
+
+- Versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a breaking change raises the minor version, a fix the patch.
+- The version is written once, at [`version`](pyproject.toml#L3-L7); `./outpost --version` reads it from the installed package. The image does not carry it, so a release rebuilds the image only when its sources changed.
+- A release is two things on `main`: a commit holding only the version change, then a tag on it.
+  1. Run the manual checklist in [docs/testing.md](docs/testing.md), on a local host and a remote one.
+  2. `uv run python -m tools.release prepare 0.3.0`: [`prepared`](tools/release.py#L58-L71) moves the Unreleased section under `## [0.3.0] - <today>`, leaves an empty Unreleased above it, and sets the version; `uv lock` follows, since the lock file names the project's version.
+  3. Commit those three files alone as `chore(release): 0.3.0`, and push `main`.
+  4. `git tag -a v0.3.0 -m "Outpost 0.3.0"`, then `git push origin v0.3.0`.
+- The tag starts the release workflow. [`checks:`](.github/workflows/release.yml#L13-L14) runs CI's checks on the tagged commit; then [`publish:`](.github/workflows/release.yml#L16-L34) refuses a tag that is not on `main` or does not name the version, and makes a GitHub Release whose notes are the version's section, from [`notes`](tools/release.py#L47-L55).
+- [`test_the_version_has_its_changelog_section`](tests/test_release.py#L34-L36) keeps the version and the changelog in step between releases.
+- People use a release with `git checkout v0.3.0` in their clone; `main` holds the next one.
